@@ -1,0 +1,1151 @@
+"""Main Wingman application."""
+
+import re
+import time
+from pathlib import Path
+
+from rich.text import Text
+from textual import on, work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Input, Static, Tree
+
+from dedalus_labs import AsyncDedalus, DedalusRunner
+
+from .checkpoints import get_checkpoint_manager, set_current_session
+from .config import (
+    APP_CREDIT,
+    APP_NAME,
+    APP_VERSION,
+    COMMANDS,
+    MARKETPLACE_SERVERS,
+    MODELS,
+    fetch_marketplace_servers,
+    get_working_dir,
+    load_api_key,
+    set_working_dir,
+)
+from .context import AUTO_COMPACT_THRESHOLD
+from .export import export_session_json, export_session_markdown, import_session_from_file
+from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
+from .memory import clear_memory, load_memory, append_memory
+from .sessions import delete_session, get_session, load_sessions, rename_session, save_session
+from .tools import (
+    CODING_SYSTEM_PROMPT,
+    FILE_TOOLS,
+    get_background_processes,
+    list_files,
+    list_processes,
+    request_background,
+    set_app_instance,
+    stop_process,
+)
+from .ui import APIKeyScreen, ChatPanel, CommandStatus, DiffModal, InputModal, SelectionModal, Thinking
+
+
+class WingmanApp(App):
+    """Wingman - Your copilot for the terminal"""
+
+    TITLE = "Wingman"
+    SUB_TITLE = "Your copilot for the terminal"
+
+    CSS = """
+    Screen {
+        background: #1a1b26;
+    }
+
+    /* Sidebar */
+    #sidebar {
+        width: 26;
+        height: 100%;
+        background: #1a1b26;
+        border: solid #3b3d4d;
+        border-title-color: #a9b1d6;
+        border-title-style: bold;
+    }
+
+    #sidebar Tree {
+        padding: 1;
+        background: transparent;
+    }
+
+    /* Main area */
+    #main {
+        height: 100%;
+    }
+
+    /* Chat panel */
+    #chat-panel {
+        height: 1fr;
+        background: #1a1b26;
+        border: solid #3b3d4d;
+        border-title-color: #a9b1d6;
+        border-title-style: bold;
+    }
+
+    #chat {
+        padding: 1 2;
+        height: auto;
+    }
+
+    /* Welcome message - centered */
+    #welcome {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        padding: 4 2;
+    }
+
+    /* Hide scrollbar by default */
+    #chat-panel {
+        scrollbar-size: 0 0;
+    }
+
+    #chat-panel:focus-within {
+        scrollbar-size: 1 1;
+    }
+
+    /* Clean message styling - no blocks */
+    ChatMessage {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    Thinking {
+        height: auto;
+        margin: 1 0;
+    }
+
+    CommandStatus {
+        height: auto;
+        margin: 0 0 1 0;
+    }
+
+    /* Input area */
+    #input-panel {
+        height: auto;
+        min-height: 4;
+        max-height: 10;
+        background: #1a1b26;
+        border: solid #3b3d4d;
+        border-title-color: #a9b1d6;
+        border-title-style: bold;
+        padding: 1;
+    }
+
+    #prompt {
+        background: #24283b;
+        border: none;
+    }
+
+    #cmd-hint {
+        height: auto;
+        color: #565f89;
+        padding: 0 1;
+    }
+
+    /* Status bar */
+    #status {
+        height: 1;
+        dock: bottom;
+        background: #16161e;
+        color: #565f89;
+        padding: 0 2;
+    }
+
+    /* Split panels container */
+    #panels-container {
+        height: 1fr;
+    }
+
+    /* Individual chat panel */
+    ChatPanel {
+        width: 1fr;
+        height: 100%;
+        border: solid #3b3d4d;
+        background: #1a1b26;
+    }
+
+    ChatPanel.active-panel {
+        border: solid #7aa2f7;
+    }
+
+    .panel-scroll {
+        height: 1fr;
+        scrollbar-size: 0 0;
+    }
+
+    .panel-scroll:focus-within {
+        scrollbar-size: 1 1;
+    }
+
+    .panel-chat {
+        padding: 1 2;
+        height: auto;
+    }
+
+    .panel-welcome {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        padding: 2 1;
+    }
+
+    .panel-input {
+        height: auto;
+        min-height: 3;
+        max-height: 8;
+        padding: 0 1 1 1;
+    }
+
+    .panel-prompt {
+        background: #24283b;
+        border: none;
+    }
+
+    .panel-hint {
+        height: auto;
+        color: #565f89;
+        padding: 0 1;
+    }
+
+    """
+
+    BINDINGS = [
+        Binding("ctrl+n", "new_session", "New Chat"),
+        Binding("ctrl+o", "open_session", "Open"),
+        Binding("ctrl+s", "toggle_sidebar", "Sidebar"),
+        Binding("ctrl+m", "select_model", "Model"),
+        Binding("ctrl+g", "add_mcp", "MCP"),
+        Binding("ctrl+l", "clear_chat", "Clear"),
+        Binding("ctrl+b", "background", "Background"),
+        Binding("ctrl+z", "undo", "Undo"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("f1", "help", "Help"),
+        # Split panel controls
+        Binding("ctrl+\\", "split_panel", "Split"),
+        Binding("ctrl+w", "close_panel", "Close Panel"),
+        Binding("ctrl+left", "prev_panel", "Prev Panel", show=False),
+        Binding("ctrl+right", "next_panel", "Next Panel", show=False),
+        Binding("ctrl+1", "goto_panel_1", "Panel 1", show=False),
+        Binding("ctrl+2", "goto_panel_2", "Panel 2", show=False),
+        Binding("ctrl+3", "goto_panel_3", "Panel 3", show=False),
+        Binding("ctrl+4", "goto_panel_4", "Panel 4", show=False),
+    ]
+
+    def __init__(self):
+        super().__init__()
+        set_app_instance(self)
+        self.client: AsyncDedalus | None = None
+        self.runner: DedalusRunner | None = None
+        self.model = MODELS[0]
+        self.coding_mode: bool = True
+        # Panel management
+        self.panels: list[ChatPanel] = []
+        self.active_panel_idx: int = 0
+        # Edit approval state
+        self._edit_approval_event = None
+        self._edit_approval_result = False
+        self._pending_edit = None
+
+    def _init_client(self, api_key: str) -> None:
+        """Initialize Dedalus client with API key."""
+        self.client = AsyncDedalus(api_key=api_key)
+        self.runner = DedalusRunner(self.client)
+
+    @property
+    def active_panel(self) -> ChatPanel | None:
+        """Get the currently active panel."""
+        if not self.panels:
+            return None
+        return self.panels[self.active_panel_idx]
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            with Vertical(id="sidebar") as sidebar:
+                sidebar.border_title = "Sessions"
+                yield Tree("Chats", id="sessions")
+            with Vertical(id="main"):
+                with Horizontal(id="panels-container"):
+                    panel = ChatPanel()
+                    self.panels.append(panel)
+                    yield panel
+        yield Static(id="status")
+
+    def on_mount(self) -> None:
+        self._refresh_sessions()
+        self._update_status()
+        self.query_one("#sidebar").display = False
+        # Set first panel as active
+        if self.panels:
+            self.panels[0].set_active(True)
+        # Check for API key
+        api_key = load_api_key()
+        if api_key:
+            self._init_client(api_key)
+        else:
+            self.push_screen(APIKeyScreen(), self._on_api_key_entered)
+        # Fetch marketplace servers in background
+        self._init_dynamic_data()
+
+    @work(thread=False)
+    async def _init_dynamic_data(self) -> None:
+        """Fetch marketplace servers from API."""
+        servers = await fetch_marketplace_servers()
+        if servers:
+            MARKETPLACE_SERVERS.clear()
+            MARKETPLACE_SERVERS.extend(servers)
+
+    def _on_api_key_entered(self, api_key: str | None) -> None:
+        """Callback when API key is entered."""
+        if api_key:
+            self._init_client(api_key)
+            if self.active_panel:
+                self.active_panel.get_input().focus()
+
+    def _update_status(self) -> None:
+        model_short = self.model.split("/")[-1]
+        panel = self.active_panel
+        mcp_count = len(panel.mcp_servers) if panel else 0
+        mcp_text = f" │ MCP: {mcp_count}" if mcp_count else ""
+        session_text = panel.session_id if panel and panel.session_id else "New Chat"
+
+        # Coding mode indicator
+        code_text = " │ [#9ece6a]CODE[/]" if self.coding_mode else ""
+
+        # Pending images indicator
+        img_count = len(panel.pending_images) if panel else 0
+        img_text = f" │ [#7dcfff]{img_count} image{'s' if img_count != 1 else ''}[/]" if img_count else ""
+
+        # Context remaining indicator
+        if panel:
+            remaining = 1.0 - panel.context.usage_percent
+        else:
+            remaining = 1.0
+        if remaining <= (1.0 - AUTO_COMPACT_THRESHOLD):
+            ctx_color = "#f7768e"
+        elif remaining <= 0.4:
+            ctx_color = "#e0af68"
+        else:
+            ctx_color = "#565f89"
+        ctx_text = f" │ [bold {ctx_color}]Context: {int(remaining * 100)}%[/]"
+
+        # Memory indicator
+        memory_text = " │ [#bb9af7]MEM[/]" if load_memory() else ""
+
+        # Panel indicator
+        panel_count = len(self.panels)
+        panel_text = f" │ Panel {self.active_panel_idx + 1}/{panel_count}" if panel_count > 1 else ""
+
+        status = f"{session_text} │ {model_short}{code_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}"
+        self.query_one("#status", Static).update(Text.from_markup(status))
+
+    def _refresh_sessions(self) -> None:
+        tree = self.query_one("#sessions", Tree)
+        tree.clear()
+        tree.root.expand()
+        sessions = load_sessions()
+        for name in sorted(sessions.keys()):
+            tree.root.add_leaf(name)
+
+    def _load_session(self, session_id: str) -> None:
+        """Load a session into the active panel."""
+        if self.active_panel:
+            self.active_panel.load_session(session_id)
+            self._update_status()
+
+    def _show_info(self, text: str) -> None:
+        """Show info in the active panel."""
+        if self.active_panel:
+            self.active_panel.show_info(text)
+
+    def _show_context_info(self) -> None:
+        """Display detailed context usage information."""
+        if not self.active_panel:
+            return
+        ctx = self.active_panel.context
+        used = ctx.total_tokens
+        limit = ctx.context_limit
+        remaining_pct = (1.0 - ctx.usage_percent) * 100
+        remaining_tokens = ctx.tokens_remaining
+        msg_count = len(ctx.messages)
+
+        info = f"""[bold #7aa2f7]Context Status[/]
+  Model: {ctx.model}
+  Remaining: [bold]{remaining_pct:.1f}%[/] ({remaining_tokens:,} tokens)
+  Used: {used:,} / {limit:,} tokens
+  Messages: {msg_count}
+
+  {"[#f7768e]LOW - consider /compact[/]" if ctx.needs_compacting else "[#9ece6a]OK[/]"}"""
+        self._show_info(info)
+
+    @work(thread=False)
+    async def _do_compact(self) -> None:
+        """Manually trigger context compaction."""
+        panel = self.active_panel
+        if not panel:
+            return
+        if self.client is None:
+            self._show_info("[#f7768e]Please enter your API key first.[/]")
+            return
+        if len(panel.context.messages) < 4:
+            self._show_info("Not enough messages to compact")
+            return
+
+        chat = panel.get_chat_container()
+        thinking = Thinking(id="compact-thinking")
+        chat.mount(thinking)
+        self._show_info("Compacting context...")
+
+        try:
+            result = await panel.context.compact(self.client)
+            thinking.remove()
+            self._show_info(f"[#9ece6a]{result}[/]")
+            self._update_status()
+            if panel.session_id:
+                save_session(panel.session_id, panel.context.messages)
+        except Exception as e:
+            thinking.remove()
+            self._show_info(f"[#f7768e]Compact failed: {e}[/]")
+
+    async def _check_auto_compact(self, panel: ChatPanel) -> None:
+        """Auto-compact if context is running low."""
+        if self.client is None:
+            return
+        if panel.context.needs_compacting:
+            remaining = int((1.0 - panel.context.usage_percent) * 100)
+            panel.show_info(f"[#e0af68]Context low ({remaining}% remaining) - auto-compacting...[/]")
+            try:
+                result = await panel.context.compact(self.client)
+                panel.show_info(f"[#9ece6a]{result}[/]")
+                self._update_status()
+            except Exception as e:
+                panel.show_info(f"[#f7768e]Auto-compact failed: {e}[/]")
+
+    def on_descendant_focus(self, event) -> None:
+        """Set panel as active when any of its descendants receives focus."""
+        for i, panel in enumerate(self.panels):
+            if panel in event.widget.ancestors_with_self:
+                if i != self.active_panel_idx:
+                    self._set_active_panel(i)
+                break
+
+    @on(Input.Changed, ".panel-prompt")
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Show command hints when typing /."""
+        panel = None
+        for ancestor in event.input.ancestors_with_self:
+            if isinstance(ancestor, ChatPanel):
+                panel = ancestor
+                break
+        if not panel:
+            return
+        hint = panel.get_hint()
+        text = event.value
+
+        if text.startswith("/"):
+            search = text[1:].lower()
+            matches = [f"[#7aa2f7]{cmd}[/]" for cmd, desc in COMMANDS
+                       if search in cmd.lower() or search in desc.lower()]
+            hint.update("  ".join(matches) if matches else "")
+        else:
+            hint.update("")
+
+    @on(Input.Submitted, ".panel-prompt")
+    def on_submit(self, event: Input.Submitted) -> None:
+        panel = None
+        for p in self.panels:
+            if p.panel_id in event.input.id:
+                panel = p
+                break
+        if not panel:
+            return
+
+        # Activate this panel if it's not active
+        if panel != self.active_panel:
+            self._set_active_panel(self.panels.index(panel))
+
+        text = event.value.strip()
+
+        if not text and not panel.pending_images:
+            return
+
+        event.input.clear()
+        panel.get_hint().update("")
+
+        if text.startswith("/"):
+            self._handle_command(text)
+            return
+
+        # Remove welcome message if present
+        try:
+            for child in panel.get_chat_container().children:
+                if "panel-welcome" in child.classes:
+                    child.remove()
+                    break
+        except Exception:
+            pass
+
+        # Create new session if none exists
+        if not panel.session_id:
+            panel.session_id = f"chat-{int(time.time())}"
+            save_session(panel.session_id, [])
+            self._refresh_sessions()
+            self._update_status()
+
+        # Handle images in message
+        images_to_send = panel.pending_images.copy()
+        panel.pending_images = []
+
+        if images_to_send:
+            panel.add_image_message("user", text, images_to_send)
+        else:
+            panel.add_message("user", text)
+
+        chat = panel.get_chat_container()
+        thinking = Thinking(id="thinking")
+        chat.mount(thinking)
+        panel.get_scroll_container().scroll_end(animate=False)
+
+        self._send_message(panel, text, thinking, images_to_send)
+
+    @work(thread=False)
+    async def _send_message(self, panel: ChatPanel, text: str, thinking: Thinking, images: list[CachedImage] | None = None) -> None:
+        if self.runner is None:
+            thinking.remove()
+            panel.add_message("assistant", "Please enter your API key first.")
+            self.push_screen(APIKeyScreen(), self._on_api_key_entered)
+            return
+        try:
+            # Build messages with system prompt if in coding mode
+            messages = panel.messages.copy()
+
+            # Replace the last user message with image version if images were attached
+            if images and messages and messages[-1].get("role") == "user":
+                messages[-1] = create_image_message_from_cache(text, images)
+
+            if self.coding_mode:
+                system_content = CODING_SYSTEM_PROMPT.format(cwd=get_working_dir())
+                # Include project memory if available
+                memory = load_memory()
+                if memory:
+                    system_content += f"\n\n## Project Memory\n{memory}"
+                system_msg = {
+                    "role": "system",
+                    "content": system_content
+                }
+                messages = [system_msg] + messages
+
+            kwargs = {
+                "messages": messages,
+                "model": self.model,
+                "max_steps": 10,
+            }
+            if panel.mcp_servers:
+                kwargs["mcp_servers"] = panel.mcp_servers
+            if self.coding_mode:
+                kwargs["tools"] = FILE_TOOLS
+
+            # Set session context for checkpoint tracking
+            set_current_session(panel.session_id)
+            try:
+                result = await self.runner.run(**kwargs)
+            finally:
+                set_current_session(None)
+            thinking.remove()
+            # Clean up all command status widgets
+            for widget in self.query(CommandStatus):
+                widget.remove()
+            panel.add_message("assistant", result.final_output)
+            save_session(panel.session_id, result.to_input_list())
+            self._update_status()
+
+            # Check if we need to auto-compact after this response
+            await self._check_auto_compact(panel)
+
+        except Exception as e:
+            thinking.remove()
+            panel.add_message("assistant", f"Error: {e}")
+
+    def show_diff_approval(self) -> None:
+        """Show diff modal for pending edit approval. Called from tool thread."""
+        if self._pending_edit is None:
+            return
+        self._show_diff_modal(
+            self._pending_edit["path"],
+            self._pending_edit["old_string"],
+            self._pending_edit["new_string"],
+        )
+
+    def action_background(self) -> None:
+        """Request backgrounding of current command (Ctrl+B)."""
+        request_background()
+
+    def action_toggle_sidebar(self) -> None:
+        """Toggle sidebar visibility."""
+        sidebar = self.query_one("#sidebar")
+        sidebar.display = not sidebar.display
+
+    def _set_active_panel(self, idx: int) -> None:
+        """Set the active panel by index."""
+        if idx < 0 or idx >= len(self.panels):
+            return
+        # Deactivate current
+        if self.active_panel:
+            self.active_panel.set_active(False)
+        # Activate new
+        self.active_panel_idx = idx
+        self.panels[idx].set_active(True)
+        self._update_status()
+
+    def action_split_panel(self) -> None:
+        """Create a new panel (Ctrl+\\)."""
+        if len(self.panels) >= 4:
+            self._show_info("Maximum 4 panels allowed")
+            return
+        container = self.query_one("#panels-container", Horizontal)
+        panel = ChatPanel()
+        self.panels.append(panel)
+        container.mount(panel)
+        # Refresh welcome art on existing panels after layout recalculates
+        self.call_after_refresh(self._refresh_welcome_art)
+        # Activate the new panel
+        self._set_active_panel(len(self.panels) - 1)
+        self._update_status()
+
+    def _refresh_welcome_art(self) -> None:
+        """Re-render welcome art on panels that have it (after resize)."""
+        for p in self.panels:
+            try:
+                p.query_one(".panel-welcome")
+                p._show_welcome()
+            except Exception:
+                pass
+
+    def action_close_panel(self) -> None:
+        """Close the active panel (Ctrl+W)."""
+        if len(self.panels) <= 1:
+            self._show_info("Cannot close the last panel")
+            return
+        panel = self.active_panel
+        if not panel:
+            return
+        idx = self.active_panel_idx
+        # Update index BEFORE removing to avoid out of bounds
+        new_idx = idx - 1 if idx > 0 else 0
+        self.active_panel_idx = new_idx
+        # Now remove the panel
+        panel.remove()
+        self.panels.remove(panel)
+        # Refresh welcome art on remaining panels (may have more space now)
+        self.call_after_refresh(self._refresh_welcome_art)
+        # Activate the new panel
+        self.panels[new_idx].set_active(True)
+        self._update_status()
+
+    def action_prev_panel(self) -> None:
+        """Switch to previous panel (Ctrl+Left)."""
+        if len(self.panels) <= 1:
+            return
+        new_idx = (self.active_panel_idx - 1) % len(self.panels)
+        self._set_active_panel(new_idx)
+
+    def action_next_panel(self) -> None:
+        """Switch to next panel (Ctrl+Right)."""
+        if len(self.panels) <= 1:
+            return
+        new_idx = (self.active_panel_idx + 1) % len(self.panels)
+        self._set_active_panel(new_idx)
+
+    def action_goto_panel_1(self) -> None:
+        if len(self.panels) >= 1:
+            self._set_active_panel(0)
+
+    def action_goto_panel_2(self) -> None:
+        if len(self.panels) >= 2:
+            self._set_active_panel(1)
+
+    def action_goto_panel_3(self) -> None:
+        if len(self.panels) >= 3:
+            self._set_active_panel(2)
+
+    def action_goto_panel_4(self) -> None:
+        if len(self.panels) >= 4:
+            self._set_active_panel(3)
+
+    def _mount_command_status(self, command: str, widget_id: str) -> None:
+        """Mount command status widget in active panel, hiding Thinking."""
+        panel = self.active_panel
+        if not panel:
+            return
+        # Hide thinking widget while command runs
+        try:
+            self.query_one("#thinking", Thinking).display = False
+        except Exception:
+            pass
+        chat = panel.get_chat_container()
+        widget = CommandStatus(command, id=widget_id)
+        chat.mount(widget)
+        panel.get_scroll_container().scroll_end(animate=False)
+
+    def _update_command_status(self, widget_id: str, status: str) -> None:
+        """Update command status widget with final status."""
+        try:
+            widget = self.query_one(f"#{widget_id}", CommandStatus)
+            widget.set_status(status)
+        except Exception:
+            pass
+        # Show thinking again for model to generate response
+        try:
+            self.query_one("#thinking", Thinking).display = True
+        except Exception:
+            pass
+
+    @work
+    async def _show_diff_modal(self, path: str, old_string: str, new_string: str) -> None:
+        """Display diff modal and handle approval."""
+        from .tools import set_edit_result
+        result = await self.push_screen_wait(DiffModal(path, old_string, new_string))
+        set_edit_result(result)
+        self._pending_edit = None
+
+    def _handle_command(self, cmd: str) -> None:
+        parts = cmd[1:].split(maxsplit=1)
+        command = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+        panel = self.active_panel
+
+        if command == "new":
+            self.action_new_session()
+
+        elif command == "split":
+            self.action_split_panel()
+
+        elif command == "close":
+            self.action_close_panel()
+
+        elif command == "rename":
+            if not panel or not panel.session_id:
+                self._show_info("No active session to rename")
+            elif arg:
+                if rename_session(panel.session_id, arg):
+                    old_name = panel.session_id
+                    panel.session_id = arg
+                    self._refresh_sessions()
+                    self._update_status()
+                    self._show_info(f"Renamed '{old_name}' → '{arg}'")
+                else:
+                    self._show_info(f"Could not rename: '{arg}' may already exist")
+            else:
+                self._show_info("Usage: /rename <new-name>")
+
+        elif command == "model":
+            self.action_select_model()
+
+        elif command == "mcp":
+            if not panel:
+                return
+            if not arg:
+                lines = []
+                if panel.mcp_servers:
+                    lines.append("[#7dcfff]Active servers:[/]")
+                    lines.extend(f"  • {s}" for s in panel.mcp_servers)
+                if MARKETPLACE_SERVERS:
+                    if lines:
+                        lines.append("")
+                    lines.append("[#9ece6a]Marketplace (Ctrl+G to add):[/]")
+                    for server in MARKETPLACE_SERVERS[:10]:
+                        slug = server.get('slug', '')
+                        title = server.get('title') or slug.split('/')[-1]
+                        lines.append(f"  • {title} [dim]({slug})[/dim]")
+                    if len(MARKETPLACE_SERVERS) > 10:
+                        lines.append(f"  [dim]... and {len(MARKETPLACE_SERVERS) - 10} more[/dim]")
+                if lines:
+                    self._show_info("\n".join(lines))
+                else:
+                    self._show_info("No MCP servers configured. Use /mcp <slug> or Ctrl+G")
+            elif arg == "clear":
+                panel.mcp_servers = []
+                self._show_info("Cleared all MCP servers")
+                self._update_status()
+            else:
+                panel.mcp_servers.append(arg)
+                self._show_info(f"Added MCP server: {arg}")
+                self._update_status()
+
+        elif command == "code":
+            self.coding_mode = not self.coding_mode
+            status = "[#9ece6a]ON[/]" if self.coding_mode else "[#f7768e]OFF[/]"
+            self._show_info(f"Coding mode: {status}")
+            self._update_status()
+
+        elif command == "cd":
+            if not arg:
+                self._show_info(f"Working directory: {get_working_dir()}")
+            else:
+                new_dir = Path(arg).expanduser().resolve()
+                if new_dir.is_dir():
+                    set_working_dir(new_dir)
+                    self._show_info(f"Changed to: {get_working_dir()}")
+                    self._update_status()
+                else:
+                    self._show_info(f"Not a directory: {arg}")
+
+        elif command == "ls":
+            pattern = arg if arg else "*"
+            self._do_ls(pattern)
+
+        elif command == "processes" or command == "ps":
+            result = list_processes()
+            self._show_info(f"[bold #7aa2f7]Background Processes[/]\n{result}")
+
+        elif command == "kill":
+            if not arg:
+                self._show_info("Usage: /kill <process_id>")
+            else:
+                result = stop_process(arg)
+                self._show_info(result)
+
+        elif command == "history":
+            cp_manager = get_checkpoint_manager()
+            session_id = panel.session_id if panel else None
+            checkpoints = cp_manager.list_recent(15, session_id=session_id)
+            if not checkpoints:
+                self._show_info("No checkpoints for this session. Checkpoints are created automatically before file edits.")
+            else:
+                lines = ["[bold #7aa2f7]Checkpoints[/] (use /rollback <id> to restore)\n"]
+                for cp in checkpoints:
+                    ts = time.strftime("%H:%M:%S", time.localtime(cp.timestamp))
+                    files = ", ".join(Path(f).name for f in cp.files.keys())
+                    lines.append(f"  [#9ece6a]{cp.id}[/] [{ts}] {cp.description}")
+                    lines.append(f"    [dim]{files}[/]")
+                self._show_info("\n".join(lines))
+
+        elif command == "rollback":
+            if not arg:
+                self._show_info("Usage: /rollback <checkpoint_id>\nUse /history to see available checkpoints.")
+            else:
+                cp_manager = get_checkpoint_manager()
+                cp = cp_manager.get(arg)
+                session_id = panel.session_id if panel else None
+                if cp and cp.session_id and cp.session_id != session_id:
+                    self._show_info(f"[#e0af68]Checkpoint {arg} belongs to a different session.[/]")
+                    return
+                restored = cp_manager.restore(arg)
+                if restored:
+                    self._show_info(f"[#9ece6a]Restored {len(restored)} file(s):[/]\n" + "\n".join(f"  • {f}" for f in restored))
+                else:
+                    self._show_info(f"[#f7768e]Checkpoint not found: {arg}[/]")
+
+        elif command == "diff":
+            cp_manager = get_checkpoint_manager()
+            session_id = panel.session_id if panel else None
+            if not arg:
+                recent = cp_manager.list_recent(1, session_id=session_id)
+                if recent:
+                    arg = recent[0].id
+                else:
+                    self._show_info("No checkpoints available for this session. Use /diff <checkpoint_id>")
+                    return
+            diffs = cp_manager.diff(arg)
+            if not diffs:
+                self._show_info(f"No changes since checkpoint {arg}")
+            else:
+                lines = [f"[bold #7aa2f7]Changes since {arg}[/]\n"]
+                for fpath, diff_text in diffs.items():
+                    lines.append(f"[#e0af68]{Path(fpath).name}[/]")
+                    # Color the diff output
+                    for line in diff_text.split("\n"):
+                        if line.startswith("+") and not line.startswith("+++"):
+                            lines.append(f"[#9ece6a]{line}[/]")
+                        elif line.startswith("-") and not line.startswith("---"):
+                            lines.append(f"[#f7768e]{line}[/]")
+                        elif line.startswith("@@"):
+                            lines.append(f"[#7aa2f7]{line}[/]")
+                        else:
+                            lines.append(f"[dim]{line}[/]")
+                self._show_info("\n".join(lines))
+
+        elif command == "image":
+            if not panel:
+                return
+            if not arg:
+                if panel.pending_images:
+                    names = [img.name for img in panel.pending_images]
+                    self._show_info(f"[#7dcfff]Pending images:[/] {', '.join(names)}\nType your message and press Enter to send with images.")
+                else:
+                    self._show_info("Usage: /image <path> or drag/drop image files\nImages will be attached to your next message.")
+            elif arg == "clear":
+                count = len(panel.pending_images)
+                panel.pending_images = []
+                self._show_info(f"Cleared {count} pending image(s)")
+                self._update_status()
+            else:
+                path = is_image_path(arg)
+                if path:
+                    cached = cache_image_immediately(path)
+                    if cached:
+                        panel.pending_images.append(cached)
+                        self._show_info(f"[#9ece6a]Attached:[/] {cached.name}")
+                        self._update_status()
+                    else:
+                        self._show_info(f"[#f7768e]Failed to read image:[/] {arg}")
+                else:
+                    self._show_info(f"[#f7768e]Not a valid image file:[/] {arg}")
+
+        elif command == "compact":
+            self._do_compact()
+
+        elif command == "context":
+            self._show_context_info()
+
+        elif command == "memory":
+            if not arg:
+                memory = load_memory()
+                if memory:
+                    self._show_info(f"[bold #7aa2f7]Project Memory[/]\n\n{memory}")
+                else:
+                    self._show_info("[dim]No project memory set. Use /memory add <text> to add notes.[/]")
+            elif arg == "clear":
+                clear_memory()
+                self._show_info("[#9ece6a]Project memory cleared[/]")
+            elif arg.startswith("add "):
+                text = arg[4:].strip()
+                if text:
+                    append_memory(text)
+                    self._show_info(f"[#9ece6a]Added to memory:[/] {text[:50]}...")
+                else:
+                    self._show_info("Usage: /memory add <text>")
+            else:
+                self._show_info("Usage: /memory, /memory add <text>, /memory clear")
+
+        elif command == "export":
+            if not panel or not panel.messages:
+                self._show_info("No messages to export")
+                return
+            session_name = panel.session_id or f"chat-{int(time.time())}"
+            if arg == "json":
+                content = export_session_json(panel.messages, session_name)
+                filename = f"{session_name}.json"
+            else:
+                content = export_session_markdown(panel.messages, session_name)
+                filename = f"{session_name}.md"
+            export_path = get_working_dir() / filename
+            export_path.write_text(content)
+            self._show_info(f"[#9ece6a]Exported to:[/] {export_path}")
+
+        elif command == "import":
+            if not arg:
+                self._show_info("Usage: /import <path>")
+                return
+            import_path = Path(arg).expanduser()
+            if not import_path.is_absolute():
+                import_path = get_working_dir() / import_path
+            messages = import_session_from_file(import_path)
+            if messages:
+                if panel:
+                    # Add to context silently (AI sees them, not shown in UI)
+                    count = 0
+                    for msg in messages:
+                        if msg["role"] in ("user", "assistant") and msg.get("content"):
+                            content = msg["content"]
+                            if isinstance(content, list):
+                                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+                            panel.messages.append({"role": msg["role"], "content": content})
+                            count += 1
+                    self._update_status()
+                    self._show_info(f"[#9ece6a]Imported {count} messages as context[/]")
+            else:
+                self._show_info(f"[#f7768e]Could not import from:[/] {arg}")
+
+        elif command == "key":
+            self.push_screen(APIKeyScreen(), self._on_api_key_entered)
+
+        elif command == "clear":
+            self.action_clear_chat()
+
+        elif command == "help":
+            self.action_help()
+
+        elif command == "quit":
+            self.exit()
+
+        else:
+            self._show_info(f"Unknown command: {command}")
+
+    @work(thread=False)
+    async def _do_ls(self, pattern: str) -> None:
+        """List files asynchronously."""
+        result = await list_files(pattern)
+        self._show_info(f"[dim]{get_working_dir()}[/]\n{result}")
+
+    @on(Tree.NodeSelected, "#sessions")
+    def on_session_select(self, event: Tree.NodeSelected) -> None:
+        if event.node.is_root:
+            return
+        self._load_session(str(event.node.label))
+
+    def action_new_session(self) -> None:
+        """Start a new chat in the active panel."""
+        panel = self.active_panel
+        if not panel:
+            return
+        panel.session_id = None
+        panel.context.clear()
+        panel._show_welcome()
+        self._update_status()
+        panel.get_input().focus()
+
+    @work
+    async def action_open_session(self) -> None:
+        sessions = list(load_sessions().keys())
+        if not sessions:
+            self._show_info("No saved sessions")
+            return
+        result = await self.push_screen_wait(
+            SelectionModal("Open Session", sessions)
+        )
+        if result:
+            self._load_session(result)
+            self._refresh_sessions()
+
+    @work
+    async def action_select_model(self) -> None:
+        result = await self.push_screen_wait(
+            SelectionModal("Select Model", MODELS)
+        )
+        if result:
+            self.model = result
+            # Sync all panels' context model
+            for panel in self.panels:
+                panel.context.model = result
+            self._show_info(f"Model: {result}")
+            self._update_status()
+
+    @work
+    async def action_add_mcp(self) -> None:
+        panel = self.active_panel
+        if not panel:
+            return
+        options = []
+        if MARKETPLACE_SERVERS:
+            for server in MARKETPLACE_SERVERS:
+                slug = server.get('slug', '')
+                title = server.get('title') or slug.split('/')[-1]
+                options.append(f"{title} ({slug})")
+        options.append("+ Custom URL")
+
+        result = await self.push_screen_wait(
+            SelectionModal("Add MCP Server", options)
+        )
+        if result:
+            if result == "+ Custom URL":
+                custom = await self.push_screen_wait(
+                    InputModal("Add MCP Server", placeholder="Enter server URL or slug...")
+                )
+                if custom:
+                    panel.mcp_servers.append(custom)
+                    self._show_info(f"Added MCP server: {custom}")
+                    self._update_status()
+            else:
+                match = re.search(r'\(([^)]+)\)$', result)
+                if match:
+                    slug = match.group(1)
+                    panel.mcp_servers.append(slug)
+                    self._show_info(f"Added MCP server: {slug}")
+                    self._update_status()
+
+    def action_clear_chat(self) -> None:
+        """Clear chat in the active panel."""
+        panel = self.active_panel
+        if not panel:
+            return
+        panel.clear_chat()
+        self._update_status()
+
+    def action_undo(self) -> None:
+        """Undo last file change by restoring most recent checkpoint for this session."""
+        cp_manager = get_checkpoint_manager()
+        panel = self.active_panel
+        session_id = panel.session_id if panel else None
+        recent = cp_manager.list_recent(1, session_id=session_id)
+        if not recent:
+            self._show_info("[#e0af68]No checkpoints available to undo in this session[/]")
+            return
+        checkpoint = recent[0]
+        restored = cp_manager.restore(checkpoint.id)
+        if restored:
+            self._show_info(f"[#9ece6a]Restored {len(restored)} file(s) from {checkpoint.id}:[/]\n" + "\n".join(f"  • {f}" for f in restored))
+        else:
+            self._show_info("[#f7768e]Failed to restore checkpoint[/]")
+
+    def action_help(self) -> None:
+        bg_count = len(get_background_processes())
+        cp_count = len(get_checkpoint_manager()._checkpoints)
+        panel = self.active_panel
+        img_count = len(panel.pending_images) if panel else 0
+        panel_count = len(self.panels)
+        help_text = f"""[bold #7aa2f7]{APP_NAME}[/] [dim]v{APP_VERSION} · {APP_CREDIT}[/]
+
+[bold #a9b1d6]Session[/]
+  [#7aa2f7]/new[/]            New session
+  [#7aa2f7]/rename <name>[/]  Rename current chat
+  [#7aa2f7]/clear[/]          Clear chat history
+
+[bold #a9b1d6]Panels[/]
+  [#7aa2f7]/split[/]          Split into new panel
+  [#7aa2f7]/close[/]          Close current panel
+  [#7aa2f7]Ctrl+\\[/]         Split panel
+  [#7aa2f7]Ctrl+W[/]          Close panel
+  [#7aa2f7]Ctrl+←/→[/]        Switch panels
+  [#7aa2f7]Ctrl+1-4[/]        Jump to panel
+
+[bold #a9b1d6]Coding[/]
+  [#7aa2f7]/code[/]           Toggle coding mode
+  [#7aa2f7]/cd <path>[/]      Set working directory
+  [#7aa2f7]/ls[/]             List files
+  [#7aa2f7]/ps[/]             List background processes
+  [#7aa2f7]/kill <id>[/]      Stop a process
+
+[bold #a9b1d6]Rollback[/]
+  [#7aa2f7]/history[/]        List checkpoints
+  [#7aa2f7]/rollback <id>[/]  Restore from checkpoint
+  [#7aa2f7]/diff [id][/]      Show changes since checkpoint
+
+[bold #a9b1d6]Images[/]
+  [#7aa2f7]/image <path>[/]   Attach image to next message
+  [#7aa2f7]/image clear[/]    Clear pending images
+
+[bold #a9b1d6]Memory[/]
+  [#7aa2f7]/memory[/]         View project memory
+  [#7aa2f7]/memory add[/]     Add note to memory
+  [#7aa2f7]/memory clear[/]   Clear memory
+
+[bold #a9b1d6]Export/Import[/]
+  [#7aa2f7]/export[/]         Export session to markdown
+  [#7aa2f7]/export json[/]    Export as JSON
+  [#7aa2f7]/import <path>[/]  Import from file
+
+[bold #a9b1d6]Config[/]
+  [#7aa2f7]/model[/]          Switch model
+  [#7aa2f7]/context[/]        Show context usage
+
+[bold #a9b1d6]Shortcuts[/]
+  [#7aa2f7]Ctrl+Z[/]  Undo (restore last checkpoint)
+  [#7aa2f7]Ctrl+B[/]  Background running command
+
+[dim]Working dir: {get_working_dir()}[/]
+[dim]Panels: {panel_count} · Background: {bg_count} · Checkpoints: {cp_count} · Images: {img_count}[/]"""
+        self._show_info(help_text)
+
+
+def main():
+    app = WingmanApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()

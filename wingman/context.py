@@ -1,0 +1,163 @@
+"""Context management and token tracking."""
+
+from dataclasses import dataclass, field
+
+from dedalus_labs import AsyncDedalus
+
+# Approximate context window sizes
+MODEL_CONTEXT_LIMITS = {
+    "openai/gpt-4.1": 128_000,
+    "anthropic/claude-sonnet-4-20250514": 200_000,
+    "anthropic/claude-opus-4-5-20251101": 200_000,
+    "google/gemini-2.5-pro-preview-06-05": 1_000_000,
+}
+
+AUTO_COMPACT_THRESHOLD = 0.85
+COMPACT_TARGET = 0.50
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count (~4 chars per token)."""
+    return len(text) // 4 + 1
+
+
+def estimate_message_tokens(message: dict) -> int:
+    """Estimate tokens for a single message."""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return estimate_tokens(content) + 4
+    elif isinstance(content, list):
+        total = 4
+        for part in content:
+            if isinstance(part, dict) and "text" in part:
+                total += estimate_tokens(part["text"])
+            elif isinstance(part, str):
+                total += estimate_tokens(part)
+        return total
+    return 10
+
+
+@dataclass
+class ContextManager:
+    """Manages conversation context and token budgets."""
+
+    model: str = "openai/gpt-4.1"
+    messages: list[dict] = field(default_factory=list)
+    _token_cache: dict[int, int] = field(default_factory=dict)
+
+    @property
+    def context_limit(self) -> int:
+        return MODEL_CONTEXT_LIMITS.get(self.model, 128_000)
+
+    @property
+    def total_tokens(self) -> int:
+        total = 0
+        for i, msg in enumerate(self.messages):
+            if i in self._token_cache:
+                total += self._token_cache[i]
+            else:
+                tokens = estimate_message_tokens(msg)
+                self._token_cache[i] = tokens
+                total += tokens
+        return total
+
+    @property
+    def usage_percent(self) -> float:
+        return self.total_tokens / self.context_limit
+
+    @property
+    def tokens_remaining(self) -> int:
+        return max(0, self.context_limit - self.total_tokens)
+
+    @property
+    def needs_compacting(self) -> bool:
+        return self.usage_percent >= AUTO_COMPACT_THRESHOLD
+
+    def add_message(self, message: dict) -> None:
+        self.messages.append(message)
+
+    def clear(self) -> None:
+        self.messages = []
+        self._token_cache = {}
+
+    def set_messages(self, messages: list[dict]) -> None:
+        self.messages = messages
+        self._token_cache = {}
+
+    def get_messages(self) -> list[dict]:
+        return self.messages
+
+    async def compact(self, client: AsyncDedalus) -> str:
+        """Compact conversation by summarizing older messages."""
+        if len(self.messages) < 4:
+            return "Not enough messages to compact"
+
+        target_tokens = int(self.context_limit * COMPACT_TARGET)
+        keep_recent = 4
+        recent_tokens = sum(
+            estimate_message_tokens(m)
+            for m in self.messages[-keep_recent:]
+        )
+
+        while keep_recent < len(self.messages) - 2:
+            next_msg = self.messages[-(keep_recent + 1)]
+            next_tokens = estimate_message_tokens(next_msg)
+            if recent_tokens + next_tokens > target_tokens * 0.4:
+                break
+            recent_tokens += next_tokens
+            keep_recent += 1
+
+        to_summarize = self.messages[:-keep_recent]
+        recent_messages = self.messages[-keep_recent:]
+
+        if not to_summarize:
+            return "Nothing to compact"
+
+        summary_prompt = self._create_summary_prompt(to_summarize)
+
+        try:
+            result = await client.chat.completions.create(
+                model=self.model.split("/")[-1],
+                messages=[{"role": "user", "content": summary_prompt}],
+                max_tokens=2000,
+            )
+            summary = result.choices[0].message.content
+        except Exception:
+            summary = f"[Previous conversation about: {self._extract_topics(to_summarize)}]"
+
+        self.messages = [
+            {
+                "role": "system",
+                "content": f"[CONVERSATION SUMMARY]\n{summary}\n[END SUMMARY]\n\nContinue the conversation naturally."
+            },
+            *recent_messages
+        ]
+        self._token_cache = {}
+
+        return f"Compacted {len(to_summarize)} messages into summary"
+
+    def _create_summary_prompt(self, messages: list[dict]) -> str:
+        conversation = "\n".join(
+            f"{m['role'].upper()}: {m.get('content', '')[:500]}"
+            for m in messages
+            if m.get("role") in ("user", "assistant")
+        )
+
+        return f"""Summarize this conversation concisely, preserving:
+1. Key decisions and conclusions
+2. Important code/technical details mentioned
+3. Current task context and goals
+4. Any unresolved questions
+
+Conversation:
+{conversation}
+
+Provide a dense summary (max 500 words):"""
+
+    def _extract_topics(self, messages: list[dict]) -> str:
+        words = []
+        for m in messages[:5]:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                words.extend(content.split()[:10])
+        return " ".join(words[:20]) + "..."

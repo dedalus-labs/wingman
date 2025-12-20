@@ -1,5 +1,6 @@
 """Main Wingman application."""
 
+import asyncio
 import re
 import time
 from pathlib import Path
@@ -41,7 +42,7 @@ from .tools import (
     set_app_instance,
     stop_process,
 )
-from .ui import APIKeyScreen, ChatPanel, CommandStatus, DiffModal, InputModal, SelectionModal, Thinking
+from .ui import APIKeyScreen, ChatPanel, CommandStatus, DiffModal, InputModal, SelectionModal, Thinking, ToolApproval
 
 
 class WingmanApp(App):
@@ -121,6 +122,18 @@ class WingmanApp(App):
     CommandStatus {
         height: auto;
         margin: 0 0 1 0;
+    }
+
+    ToolApproval {
+        height: auto;
+        margin: 0 0 1 0;
+        padding: 1;
+        background: #16161e;
+        border: solid #3b3d4d;
+    }
+
+    ToolApproval:focus {
+        border: solid #7aa2f7;
     }
 
     /* Input area */
@@ -579,6 +592,21 @@ class WingmanApp(App):
             self._pending_edit["old_string"],
             self._pending_edit["new_string"],
         )
+
+    async def request_tool_approval(self, tool_name: str, command: str) -> str:
+        """Request approval for a tool. Returns 'yes', 'always', or 'no'."""
+        panel = self.active_panel
+        if not panel:
+            return "yes"
+        chat = panel.get_chat_container()
+        widget = ToolApproval(tool_name, command, id="tool-approval")
+        chat.mount(widget)
+        panel.get_scroll_container().scroll_end(animate=False)
+        while widget.result is None:
+            await asyncio.sleep(0.05)
+        result = widget.result
+        widget.remove()
+        return result
 
     def action_background(self) -> None:
         """Request backgrounding of current command (Ctrl+B)."""

@@ -50,6 +50,78 @@ class Thinking(Static):
         return Text.from_markup(f"[#7aa2f7]{self.FRAMES[self._frame]}[/]")
 
 
+class ToolApproval(Static, can_focus=True):
+    """Inline tool approval prompt like Claude Code."""
+
+    BINDINGS = [
+        Binding("1", "select_yes", "Yes", show=False),
+        Binding("y", "select_yes", "Yes", show=False),
+        Binding("2", "select_always", "Always", show=False),
+        Binding("n", "select_no", "No", show=False),
+        Binding("escape", "select_no", "No", show=False),
+        Binding("up", "move_up", "Up", show=False),
+        Binding("down", "move_down", "Down", show=False),
+        Binding("enter", "confirm", "Confirm", show=False),
+    ]
+
+    def __init__(self, tool_name: str, command: str, **kwargs):
+        super().__init__(**kwargs)
+        self.tool_name = tool_name
+        self.command = command
+        self.result: str | None = None  # "yes", "always", "no"
+        self._selected = 0  # 0=yes, 1=always, 2=no
+
+    def on_mount(self) -> None:
+        self.focus()
+
+    def render(self) -> Text:
+        short_cmd = self.command if len(self.command) <= 60 else self.command[:57] + "..."
+        options = [
+            ("1.", "Yes"),
+            ("2.", "Yes, always allow"),
+            ("n.", "No"),
+        ]
+        lines = [
+            f"[bold #e0af68]{self.tool_name}[/]",
+            f"  [#a9b1d6]{short_cmd}[/]",
+            "",
+        ]
+        for i, (key, label) in enumerate(options):
+            if i == self._selected:
+                if i == 2:
+                    lines.append(f"[#f7768e]› {key}[/] [bold]{label}[/]")
+                else:
+                    lines.append(f"[#9ece6a]› {key}[/] [bold]{label}[/]")
+            else:
+                lines.append(f"[dim]  {key} {label}[/]")
+        return Text.from_markup("\n".join(lines))
+
+    def action_move_up(self) -> None:
+        self._selected = (self._selected - 1) % 3
+        self.refresh()
+
+    def action_move_down(self) -> None:
+        self._selected = (self._selected + 1) % 3
+        self.refresh()
+
+    def action_confirm(self) -> None:
+        if self._selected == 0:
+            self.result = "yes"
+        elif self._selected == 1:
+            self.result = "always"
+        else:
+            self.result = "no"
+
+    def action_select_yes(self) -> None:
+        self.result = "yes"
+
+    def action_select_always(self) -> None:
+        self.result = "always"
+
+    def action_select_no(self) -> None:
+        self.result = "no"
+
+
 class CommandStatus(Static):
     """Shows running command with pulsating dot."""
 

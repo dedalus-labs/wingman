@@ -20,6 +20,9 @@ _edit_approval_event: threading.Event | None = None
 _edit_approval_result: bool = False
 _pending_edit: dict | None = None
 
+# Tool approval state - tracks which tools are "always allowed"
+_always_allowed_tools: set[str] = set()
+
 
 def set_app_instance(app) -> None:
     """Set the app instance for UI interactions."""
@@ -38,6 +41,19 @@ def set_edit_result(result: bool) -> None:
     _edit_approval_result = result
     if _edit_approval_event:
         _edit_approval_event.set()
+
+
+async def request_tool_approval(tool_name: str, command: str) -> bool:
+    """Request approval for a tool. Returns True if approved."""
+    if tool_name in _always_allowed_tools:
+        return True
+    if _app_instance is None:
+        return True
+    result = await _app_instance.request_tool_approval(tool_name, command)
+    if result == "always":
+        _always_allowed_tools.add(tool_name)
+        return True
+    return result == "yes"
 
 
 @dataclass
@@ -187,6 +203,8 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
 
 async def list_files(pattern: str = "**/*", path: str = ".") -> str:
     """List files matching a glob pattern."""
+    if not await request_tool_approval("list_files", f"ls {pattern}"):
+        return "Command rejected by user."
     widget_id = await _show_command_widget(f"ls {pattern}")
     base = Path(path)
     if not base.is_absolute():
@@ -209,6 +227,8 @@ async def list_files(pattern: str = "**/*", path: str = ".") -> str:
 
 async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     """Search for a regex pattern in files."""
+    if not await request_tool_approval("search_files", f"grep \"{pattern}\""):
+        return "Command rejected by user."
     widget_id = await _show_command_widget(f"grep \"{pattern}\"")
     base = Path(path)
     if not base.is_absolute():
@@ -251,6 +271,10 @@ async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -
 async def run_command(command: str) -> str:
     """Run a shell command and return the output."""
     global _background_requested, _next_bg_id, _current_command
+
+    if not await request_tool_approval("run_command", f"$ {command}"):
+        return "Command rejected by user."
+
     _background_requested = False
     _current_command = command
 

@@ -93,7 +93,6 @@ class BackgroundProcess:
 _background_processes: dict[str, BackgroundProcess] = {}
 _next_bg_id: int = 1
 _background_requested: bool = False
-_current_command: str | None = None
 _command_widget_counter: int = 0
 
 
@@ -101,10 +100,6 @@ def request_background() -> None:
     """Called when user presses Ctrl+B to background current command."""
     global _background_requested
     _background_requested = True
-
-
-def get_current_command() -> str | None:
-    return _current_command
 
 
 def get_background_processes() -> dict[str, BackgroundProcess]:
@@ -201,65 +196,105 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         return f"Error editing file: {e}"
 
 
+def _list_files_sync(pattern: str, base: Path, working_dir: Path) -> list[str]:
+    """Synchronous file listing - runs in thread pool."""
+    ignore = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv', '.idea',
+        '.cache', 'dist', 'build', '.next', '.nuxt', 'coverage',
+    }
+    results = []
+    max_files = 5000
+    checked = 0
+    for p in base.glob(pattern):
+        checked += 1
+        if checked > max_files:
+            break
+        if p.is_file() and not any(part in ignore for part in p.parts):
+            results.append(str(p.relative_to(working_dir)))
+            if len(results) >= 100:
+                break
+    return sorted(results)
+
+
 async def list_files(pattern: str = "**/*", path: str = ".") -> str:
     """List files matching a glob pattern."""
-    if not await request_tool_approval("list_files", f"ls {pattern}"):
-        return "Command rejected by user."
     widget_id = await _show_command_widget(f"ls {pattern}")
     base = Path(path)
     if not base.is_absolute():
         base = get_working_dir() / base
     try:
-        matches = sorted(base.glob(pattern))
-        ignore = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', '.idea'}
-        filtered = [
-            str(p.relative_to(get_working_dir())) for p in matches
-            if p.is_file() and not any(part in ignore for part in p.parts)
-        ]
+        filtered = await asyncio.wait_for(
+            asyncio.to_thread(_list_files_sync, pattern, base, get_working_dir()),
+            timeout=15.0
+        )
         await _update_command_status(widget_id, "success")
         if not filtered:
             return f"No files matching: {pattern}"
-        return '\n'.join(filtered[:100])
+        return '\n'.join(filtered)
+    except asyncio.TimeoutError:
+        await _update_command_status(widget_id, "error")
+        return f"Listing timed out after 15s. Try a more specific pattern."
     except Exception as e:
         await _update_command_status(widget_id, "error")
         return f"Error listing files: {e}"
 
 
+def _search_files_sync(pattern: str, base: Path, file_pattern: str, working_dir: Path) -> list[str]:
+    """Synchronous file search - runs in thread pool."""
+    regex = re.compile(pattern, re.IGNORECASE)
+    results = []
+    ignore = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+        '.cache', 'dist', 'build', '.next', '.nuxt', 'coverage',
+        '.tox', '.eggs', '*.egg-info', '.mypy_cache', '.pytest_cache',
+    }
+    max_file_size = 1_000_000  # 1MB limit
+    files_checked = 0
+    max_files = 5000
+
+    for file_path in base.rglob(file_pattern):
+        files_checked += 1
+        if files_checked > max_files:
+            results.append(f"... (stopped after {max_files} files)")
+            break
+        if not file_path.is_file():
+            continue
+        if any(part in ignore for part in file_path.parts):
+            continue
+        try:
+            if file_path.stat().st_size > max_file_size:
+                continue
+            content = file_path.read_text()
+            for i, line in enumerate(content.split('\n'), 1):
+                if regex.search(line):
+                    rel_path = file_path.relative_to(working_dir)
+                    results.append(f"{rel_path}:{i}: {line.strip()}")
+                    if len(results) >= 50:
+                        results.append("... (truncated)")
+                        return results
+        except (UnicodeDecodeError, PermissionError, OSError):
+            continue
+    return results
+
+
 async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     """Search for a regex pattern in files."""
-    if not await request_tool_approval("search_files", f"grep \"{pattern}\""):
-        return "Command rejected by user."
     widget_id = await _show_command_widget(f"grep \"{pattern}\"")
     base = Path(path)
     if not base.is_absolute():
         base = get_working_dir() / base
     try:
-        regex = re.compile(pattern, re.IGNORECASE)
-        results = []
-        ignore = {'.git', 'node_modules', '__pycache__', '.venv', 'venv'}
-
-        for file_path in base.rglob(file_pattern):
-            if not file_path.is_file():
-                continue
-            if any(part in ignore for part in file_path.parts):
-                continue
-            try:
-                content = file_path.read_text()
-                for i, line in enumerate(content.split('\n'), 1):
-                    if regex.search(line):
-                        rel_path = file_path.relative_to(get_working_dir())
-                        results.append(f"{rel_path}:{i}: {line.strip()}")
-            except (UnicodeDecodeError, PermissionError):
-                continue
-
-            if len(results) >= 50:
-                results.append("... (truncated)")
-                break
-
+        results = await asyncio.wait_for(
+            asyncio.to_thread(_search_files_sync, pattern, base, file_pattern, get_working_dir()),
+            timeout=30.0
+        )
         await _update_command_status(widget_id, "success")
         if not results:
             return f"No matches for: {pattern}"
         return '\n'.join(results)
+    except asyncio.TimeoutError:
+        await _update_command_status(widget_id, "error")
+        return f"Search timed out after 30s. Try a more specific path or pattern."
     except re.error as e:
         await _update_command_status(widget_id, "error")
         return f"Invalid regex: {e}"
@@ -270,14 +305,12 @@ async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -
 
 async def run_command(command: str) -> str:
     """Run a shell command and return the output."""
-    global _background_requested, _next_bg_id, _current_command
+    global _background_requested, _next_bg_id
 
     if not await request_tool_approval("run_command", f"$ {command}"):
         return "Command rejected by user."
 
     _background_requested = False
-    _current_command = command
-
     widget_id = await _show_command_widget(command)
 
     try:
@@ -343,9 +376,6 @@ async def run_command(command: str) -> str:
     except Exception as e:
         await _update_command_status(widget_id, "error")
         return f"Error running command: {e}"
-
-    finally:
-        _current_command = None
 
 
 def get_process_output(process_id: str, lines: int = 50) -> str:
@@ -413,9 +443,16 @@ CODING_SYSTEM_PROMPT = """You are Wingman, an AI coding assistant. You help user
 1. ALWAYS read a file before editing it
 2. Use list_files or search_files to discover code structure
 3. Make minimal, focused edits
-4. Explain what you're doing
-5. If you're unsure, ask the user
-6. For long-running commands, the user may background them with Ctrl+B
+4. If you're unsure, ask the user
+5. For long-running commands, the user may background them with Ctrl+B
+
+## IMPORTANT: Think Out Loud
+BEFORE calling any tool, briefly explain what you're about to do and why. For example:
+- "I'll search for files containing 'server'..."
+- "Let me read the config file to understand the structure..."
+- "I'll run the tests to check if the fix works..."
+
+This helps the user follow along with your reasoning. Don't just silently call tools.
 
 ## Background Processes
 When a command is backgrounded, you'll see "[Backgrounded: bg_X]". Use get_process_output('bg_X') to check its output later.

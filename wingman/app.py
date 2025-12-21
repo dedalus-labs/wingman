@@ -31,18 +31,19 @@ from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
 from .memory import clear_memory, load_memory, append_memory
-from .sessions import delete_session, get_session, load_sessions, rename_session, save_session
+from .sessions import get_session, load_sessions, rename_session, save_session
 from .tools import (
     CODING_SYSTEM_PROMPT,
     FILE_TOOLS,
     get_background_processes,
+    get_pending_edit,
     list_files,
     list_processes,
     request_background,
     set_app_instance,
     stop_process,
 )
-from .ui import APIKeyScreen, ChatPanel, CommandStatus, DiffModal, InputModal, SelectionModal, Thinking, ToolApproval
+from .ui import APIKeyScreen, ChatPanel, CommandStatus, DiffModal, InputModal, SelectionModal, StreamingText, Thinking, ToolApproval
 
 
 class WingmanApp(App):
@@ -121,7 +122,12 @@ class WingmanApp(App):
 
     CommandStatus {
         height: auto;
-        margin: 0 0 1 0;
+        margin: 1 0;
+    }
+
+    StreamingText {
+        height: auto;
+        margin: 1 0;
     }
 
     ToolApproval {
@@ -259,10 +265,6 @@ class WingmanApp(App):
         # Panel management
         self.panels: list[ChatPanel] = []
         self.active_panel_idx: int = 0
-        # Edit approval state
-        self._edit_approval_event = None
-        self._edit_approval_result = False
-        self._pending_edit = None
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key."""
@@ -556,6 +558,7 @@ class WingmanApp(App):
                 "messages": messages,
                 "model": self.model,
                 "max_steps": 10,
+                "stream": True,
             }
             if panel.mcp_servers:
                 kwargs["mcp_servers"] = panel.mcp_servers
@@ -564,33 +567,75 @@ class WingmanApp(App):
 
             # Set session context for checkpoint tracking
             set_current_session(panel.session_id)
+            chat = panel.get_chat_container()
+
+            accumulated_content = ""
+            streaming_widget = None
+            widget_counter = 0
+
             try:
-                result = await self.runner.run(**kwargs)
+                stream = self.runner.run(**kwargs)
+                async for chunk in stream:
+                    if hasattr(chunk, "choices") and chunk.choices:
+                        delta = chunk.choices[0].delta
+
+                        # Tool call detected - finalize current text segment
+                        if hasattr(delta, "tool_calls") and delta.tool_calls:
+                            if streaming_widget is not None:
+                                streaming_widget.mark_complete()
+                                streaming_widget = None
+
+                        # Stream text content
+                        if hasattr(delta, "content") and delta.content:
+                            if streaming_widget is None:
+                                widget_counter += 1
+                                streaming_widget = StreamingText(id=f"streaming-{widget_counter}")
+                                chat.mount(streaming_widget, before=thinking)
+                            accumulated_content += delta.content
+                            streaming_widget.append_text(delta.content)
+                            panel.get_scroll_container().scroll_end(animate=False)
+                            await asyncio.sleep(0)
             finally:
                 set_current_session(None)
-            thinking.remove()
-            # Clean up all command status widgets
-            for widget in self.query(CommandStatus):
-                widget.remove()
-            panel.add_message("assistant", result.final_output)
-            save_session(panel.session_id, result.to_input_list())
-            self._update_status()
 
-            # Check if we need to auto-compact after this response
+            if streaming_widget is not None:
+                streaming_widget.mark_complete()
+
+            try:
+                thinking.remove()
+            except Exception:
+                pass
+
+            if accumulated_content:
+                panel.messages.append({"role": "assistant", "content": accumulated_content})
+                save_session(panel.session_id, panel.messages)
+
+            self._update_status()
             await self._check_auto_compact(panel)
 
         except Exception as e:
-            thinking.remove()
+            # Clean up thinking spinner
+            try:
+                thinking.remove()
+            except Exception:
+                pass
+            # Clean up any streaming widgets
+            for sw in self.query(StreamingText):
+                try:
+                    sw.remove()
+                except Exception:
+                    pass
             panel.add_message("assistant", f"Error: {e}")
 
     def show_diff_approval(self) -> None:
         """Show diff modal for pending edit approval. Called from tool thread."""
-        if self._pending_edit is None:
+        pending = get_pending_edit()
+        if pending is None:
             return
         self._show_diff_modal(
-            self._pending_edit["path"],
-            self._pending_edit["old_string"],
-            self._pending_edit["new_string"],
+            pending["path"],
+            pending["old_string"],
+            pending["new_string"],
         )
 
     async def request_tool_approval(self, tool_name: str, command: str) -> str:
@@ -705,18 +750,18 @@ class WingmanApp(App):
             self._set_active_panel(3)
 
     def _mount_command_status(self, command: str, widget_id: str) -> None:
-        """Mount command status widget in active panel, hiding Thinking."""
+        """Mount command status widget in active panel, before Thinking spinner."""
         panel = self.active_panel
         if not panel:
             return
-        # Hide thinking widget while command runs
-        try:
-            self.query_one("#thinking", Thinking).display = False
-        except Exception:
-            pass
         chat = panel.get_chat_container()
         widget = CommandStatus(command, id=widget_id)
-        chat.mount(widget)
+        # Mount before thinking spinner so it stays at bottom
+        try:
+            thinking = self.query_one("#thinking", Thinking)
+            chat.mount(widget, before=thinking)
+        except Exception:
+            chat.mount(widget)
         panel.get_scroll_container().scroll_end(animate=False)
 
     def _update_command_status(self, widget_id: str, status: str) -> None:
@@ -726,11 +771,6 @@ class WingmanApp(App):
             widget.set_status(status)
         except Exception:
             pass
-        # Show thinking again for model to generate response
-        try:
-            self.query_one("#thinking", Thinking).display = True
-        except Exception:
-            pass
 
     @work
     async def _show_diff_modal(self, path: str, old_string: str, new_string: str) -> None:
@@ -738,7 +778,6 @@ class WingmanApp(App):
         from .tools import set_edit_result
         result = await self.push_screen_wait(DiffModal(path, old_string, new_string))
         set_edit_result(result)
-        self._pending_edit = None
 
     def _handle_command(self, cmd: str) -> None:
         parts = cmd[1:].split(maxsplit=1)

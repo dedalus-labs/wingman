@@ -1,7 +1,7 @@
 """UI components for Wingman."""
 
 from .modals import APIKeyScreen, DiffModal, InputModal, SelectionModal
-from .widgets import ChatMessage, ChatPanel, CommandStatus, Thinking, ToolApproval
+from .widgets import ChatMessage, ChatPanel, CommandStatus, StreamingText, Thinking, ToolApproval
 
 __all__ = [
     "APIKeyScreen",
@@ -11,6 +11,7 @@ __all__ = [
     "ChatMessage",
     "ChatPanel",
     "CommandStatus",
+    "StreamingText",
     "Thinking",
     "ToolApproval",
 ]

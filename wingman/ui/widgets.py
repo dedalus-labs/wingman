@@ -1,5 +1,7 @@
 """UI widgets for chat interface."""
 
+import random
+
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import ComposeResult
@@ -31,13 +33,15 @@ class ChatMessage(Static):
 
 
 class Thinking(Static):
-    """Minimal loading indicator."""
+    """Loading indicator with status label."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    LABELS = ["Mazing", "Soaring"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._frame = 0
+        self._label = random.choice(self.LABELS)
 
     def on_mount(self) -> None:
         self.set_interval(0.08, self._tick)
@@ -47,7 +51,24 @@ class Thinking(Static):
         self.refresh()
 
     def render(self) -> Text:
-        return Text.from_markup(f"[#7aa2f7]{self.FRAMES[self._frame]}[/]")
+        return Text.from_markup(f"[#e0af68]{self.FRAMES[self._frame]}[/] [dim #a9b1d6]{self._label}...[/]")
+
+
+class StreamingText(Static):
+    """Widget for displaying streaming text content in real-time."""
+
+    def __init__(self, **kwargs):
+        super().__init__("", **kwargs)
+        self._content = ""
+
+    def append_text(self, text: str) -> None:
+        """Append text to the streaming content."""
+        self._content += text
+        self.update(Text.from_markup(f"[#c0caf5]{self._content}[/]"))
+
+    def mark_complete(self) -> None:
+        """Ensure final content is displayed."""
+        self.update(Text.from_markup(f"[#c0caf5]{self._content}[/]"))
 
 
 class ToolApproval(Static, can_focus=True):
@@ -75,15 +96,14 @@ class ToolApproval(Static, can_focus=True):
         self.focus()
 
     def render(self) -> Text:
-        short_cmd = self.command if len(self.command) <= 60 else self.command[:57] + "..."
         options = [
             ("1.", "Yes"),
-            ("2.", "Yes, always allow"),
+            ("2.", "Yes, always allow (this session)"),
             ("n.", "No"),
         ]
         lines = [
             f"[bold #e0af68]{self.tool_name}[/]",
-            f"  [#a9b1d6]{short_cmd}[/]",
+            f"  [#a9b1d6]{self.command}[/]",
             "",
         ]
         for i, (key, label) in enumerate(options):
@@ -143,8 +163,6 @@ class CommandStatus(Static):
         self.refresh()
 
     def render(self) -> Text:
-        short_cmd = self.command if len(self.command) <= 50 else self.command[:47] + "..."
-
         if self._status == "success":
             dot = "[#9ece6a]•[/]"
             hint = ""
@@ -159,7 +177,7 @@ class CommandStatus(Static):
             dot = f"[{colors[self._pulse]}]•[/]"
             hint = "  [dim]Ctrl+B to background[/]"
 
-        return Text.from_markup(f"{dot} [dim]$ {short_cmd}[/]{hint}")
+        return Text.from_markup(f"{dot} [dim]$ {self.command}[/]{hint}")
 
 
 _panel_counter: int = 0

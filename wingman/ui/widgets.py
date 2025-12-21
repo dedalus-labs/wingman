@@ -143,13 +143,17 @@ class ToolApproval(Static, can_focus=True):
 
 
 class CommandStatus(Static):
-    """Shows running command with pulsating dot."""
+    """Shows running command with pulsating dot and optional output preview."""
+
+    MAX_OUTPUT_LINES = 3
+    MAX_LINE_LENGTH = 80
 
     def __init__(self, command: str, **kwargs):
         super().__init__(**kwargs)
         self.command = command
         self._pulse = 0
         self._status: str | None = None
+        self._output: str | None = None
 
     def on_mount(self) -> None:
         self.set_interval(0.15, self._tick)
@@ -158,8 +162,9 @@ class CommandStatus(Static):
         self._pulse = (self._pulse + 1) % 6
         self.refresh()
 
-    def set_status(self, status: str) -> None:
+    def set_status(self, status: str, output: str | None = None) -> None:
         self._status = status
+        self._output = output
         self.refresh()
 
     def render(self) -> Text:
@@ -177,7 +182,22 @@ class CommandStatus(Static):
             dot = f"[{colors[self._pulse]}]•[/]"
             hint = "  [dim]Ctrl+B to background[/]"
 
-        return Text.from_markup(f"{dot} [dim]$ {self.command}[/]{hint}")
+        result = f"{dot} [dim]$ {self.command}[/]{hint}"
+
+        # Add output preview if available
+        if self._output and self._status in ("success", "error"):
+            lines = [l for l in self._output.strip().split('\n') if l.strip()]
+            if lines:
+                preview_lines = []
+                for line in lines[:self.MAX_OUTPUT_LINES]:
+                    if len(line) > self.MAX_LINE_LENGTH:
+                        line = line[:self.MAX_LINE_LENGTH - 3] + "..."
+                    preview_lines.append(f"  [dim #7dcfff]→[/] [#a9b1d6]{line}[/]")
+                if len(lines) > self.MAX_OUTPUT_LINES:
+                    preview_lines.append(f"  [dim]... +{len(lines) - self.MAX_OUTPUT_LINES} more lines[/]")
+                result += "\n" + "\n".join(preview_lines)
+
+        return Text.from_markup(result)
 
 
 _panel_counter: int = 0

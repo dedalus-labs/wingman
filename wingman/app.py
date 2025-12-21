@@ -645,7 +645,12 @@ class WingmanApp(App):
             return "yes"
         chat = panel.get_chat_container()
         widget = ToolApproval(tool_name, command, id="tool-approval")
-        chat.mount(widget)
+        # Mount before thinking spinner so it stays at bottom
+        try:
+            thinking = self.query_one("#thinking", Thinking)
+            chat.mount(widget, before=thinking)
+        except Exception:
+            chat.mount(widget)
         panel.get_scroll_container().scroll_end(animate=False)
         while widget.result is None:
             await asyncio.sleep(0.05)
@@ -764,11 +769,11 @@ class WingmanApp(App):
             chat.mount(widget)
         panel.get_scroll_container().scroll_end(animate=False)
 
-    def _update_command_status(self, widget_id: str, status: str) -> None:
-        """Update command status widget with final status."""
+    def _update_command_status(self, widget_id: str, status: str, output: str | None = None) -> None:
+        """Update command status widget with final status and optional output."""
         try:
             widget = self.query_one(f"#{widget_id}", CommandStatus)
-            widget.set_status(status)
+            widget.set_status(status, output)
         except Exception:
             pass
 

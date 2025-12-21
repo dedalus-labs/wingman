@@ -571,7 +571,7 @@ class WingmanApp(App):
 
             accumulated_content = ""
             streaming_widget = None
-            widget_counter = 0
+            widget_id = int(time.time() * 1000)  # Unique base ID per message
 
             try:
                 stream = self.runner.run(**kwargs)
@@ -588,8 +588,8 @@ class WingmanApp(App):
                         # Stream text content
                         if hasattr(delta, "content") and delta.content:
                             if streaming_widget is None:
-                                widget_counter += 1
-                                streaming_widget = StreamingText(id=f"streaming-{widget_counter}")
+                                widget_id += 1
+                                streaming_widget = StreamingText(id=f"streaming-{widget_id}")
                                 chat.mount(streaming_widget, before=thinking)
                             accumulated_content += delta.content
                             streaming_widget.append_text(delta.content)

@@ -116,42 +116,75 @@ async def _show_command_widget(command: str) -> str:
     return widget_id
 
 
-async def _update_command_status(widget_id: str, status: str) -> None:
+async def _update_command_status(widget_id: str, status: str, output: str | None = None) -> None:
     if _app_instance is not None:
-        _app_instance._update_command_status(widget_id, status)
+        _app_instance._update_command_status(widget_id, status, output)
         await asyncio.sleep(0)
 
 
 def read_file(path: str) -> str:
     """Read the contents of a file."""
+    global _command_widget_counter
     file_path = Path(path)
     if not file_path.is_absolute():
         file_path = get_working_dir() / file_path
+
+    # Show status widget
+    _command_widget_counter += 1
+    widget_id = f"cmd-status-{_command_widget_counter}"
+    display_path = path if len(path) <= 40 else "..." + path[-37:]
+    if _app_instance is not None:
+        _app_instance.call_from_thread(_app_instance._mount_command_status, f"read {display_path}", widget_id)
+
     if not file_path.exists():
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error")
         return f"Error: File not found: {path}"
     if not file_path.is_file():
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error")
         return f"Error: Not a file: {path}"
     try:
         content = file_path.read_text()
         lines = content.split('\n')
         numbered = '\n'.join(f"{i+1:4}│ {line}" for i, line in enumerate(lines))
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "success", f"{len(lines)} lines")
         return numbered
     except Exception as e:
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error", str(e))
         return f"Error reading file: {e}"
 
 
 def write_file(path: str, content: str) -> str:
     """Create a new file with the given content."""
+    global _command_widget_counter
     file_path = Path(path)
     if not file_path.is_absolute():
         file_path = get_working_dir() / file_path
+
+    # Show status widget
+    _command_widget_counter += 1
+    widget_id = f"cmd-status-{_command_widget_counter}"
+    display_path = path if len(path) <= 40 else "..." + path[-37:]
+    if _app_instance is not None:
+        _app_instance.call_from_thread(_app_instance._mount_command_status, f"write {display_path}", widget_id)
+
     if file_path.exists():
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error")
         return f"Error: File already exists: {path}. Use edit_file to modify existing files."
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
+        lines = len(content.split('\n'))
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "success", f"Created ({lines} lines)")
         return f"Created: {path}"
     except Exception as e:
+        if _app_instance is not None:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error", str(e))
         return f"Error writing file: {e}"
 
 
@@ -227,15 +260,14 @@ async def list_files(pattern: str = "**/*", path: str = ".") -> str:
             asyncio.to_thread(_list_files_sync, pattern, base, get_working_dir()),
             timeout=15.0
         )
-        await _update_command_status(widget_id, "success")
-        if not filtered:
-            return f"No files matching: {pattern}"
-        return '\n'.join(filtered)
+        result = '\n'.join(filtered) if filtered else f"No files matching: {pattern}"
+        await _update_command_status(widget_id, "success", result)
+        return result
     except asyncio.TimeoutError:
-        await _update_command_status(widget_id, "error")
+        await _update_command_status(widget_id, "error", "Timed out after 15s")
         return f"Listing timed out after 15s. Try a more specific pattern."
     except Exception as e:
-        await _update_command_status(widget_id, "error")
+        await _update_command_status(widget_id, "error", str(e))
         return f"Error listing files: {e}"
 
 
@@ -288,18 +320,17 @@ async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -
             asyncio.to_thread(_search_files_sync, pattern, base, file_pattern, get_working_dir()),
             timeout=30.0
         )
-        await _update_command_status(widget_id, "success")
-        if not results:
-            return f"No matches for: {pattern}"
-        return '\n'.join(results)
+        result = '\n'.join(results) if results else f"No matches for: {pattern}"
+        await _update_command_status(widget_id, "success", result)
+        return result
     except asyncio.TimeoutError:
-        await _update_command_status(widget_id, "error")
+        await _update_command_status(widget_id, "error", "Timed out after 30s")
         return f"Search timed out after 30s. Try a more specific path or pattern."
     except re.error as e:
-        await _update_command_status(widget_id, "error")
+        await _update_command_status(widget_id, "error", f"Invalid regex: {e}")
         return f"Invalid regex: {e}"
     except Exception as e:
-        await _update_command_status(widget_id, "error")
+        await _update_command_status(widget_id, "error", str(e))
         return f"Error searching: {e}"
 
 
@@ -362,19 +393,20 @@ async def run_command(command: str) -> str:
 
             if time.time() - start_time > timeout:
                 proc.terminate()
-                await _update_command_status(widget_id, "error")
-                return f"Error: Command timed out after {timeout}s\n" + "".join(output_lines[-50:])
+                output = "".join(output_lines[-50:])
+                await _update_command_status(widget_id, "error", f"Timed out after {timeout}s")
+                return f"Error: Command timed out after {timeout}s\n" + output
 
         output = "".join(output_lines)
         if len(output) > 10000:
             output = output[:10000] + "\n... (truncated)"
 
         status = "success" if proc.returncode == 0 else "error"
-        await _update_command_status(widget_id, status)
+        await _update_command_status(widget_id, status, output or "(no output)")
         return output or "(no output)"
 
     except Exception as e:
-        await _update_command_status(widget_id, "error")
+        await _update_command_status(widget_id, "error", str(e))
         return f"Error running command: {e}"
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rich.markdown import Markdown
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -17,6 +18,22 @@ from ..context import ContextManager
 from ..images import CachedImage, create_image_message_from_cache
 from ..sessions import get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
+
+
+class MultilineInput(Input):
+    """Input that joins pasted multi-line text instead of truncating."""
+
+    def _on_paste(self, event: events.Paste) -> None:
+        if event.text:
+            # Join all lines with spaces instead of taking only the first line
+            cleaned = " ".join(event.text.split())
+            selection = self.selection
+            if selection.is_empty:
+                self.insert_text_at_cursor(cleaned)
+            else:
+                self.replace(cleaned, *selection)
+        event.stop()
+        event.prevent_default()
 
 
 class ChatMessage(Static):
@@ -331,7 +348,7 @@ class ChatPanel(Vertical):
             yield Vertical(id=f"{self.panel_id}-chat", classes="panel-chat")
         with Vertical(classes="panel-input"):
             yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
-            yield Input(
+            yield MultilineInput(
                 placeholder="Message... (/ for commands)",
                 id=f"{self.panel_id}-prompt",
                 classes="panel-prompt"

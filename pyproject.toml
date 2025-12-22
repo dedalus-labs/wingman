@@ -12,7 +12,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wingman-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI-powered TUI coding assistant for the terminal"
 readme = "README.md"
 requires-python = ">=3.10"

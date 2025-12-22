@@ -1,12 +1,14 @@
 """UI widgets for chat interface."""
 
 import random
+import time
 
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import Input, Static
 
 from ..config import APP_CREDIT, APP_VERSION, MODELS
@@ -142,21 +144,75 @@ class ToolApproval(Static, can_focus=True):
         self.result = "no"
 
 
+class ImageChip(Static, can_focus=True):
+    """Minimal image indicator that can be removed with backspace."""
+
+    BINDINGS = [
+        Binding("backspace", "remove", "Remove", show=False),
+        Binding("delete", "remove", "Remove", show=False),
+        Binding("left", "nav_left", "Left", show=False),
+        Binding("right", "nav_right", "Right", show=False),
+        Binding("down", "nav_down", "Down", show=False),
+    ]
+
+    def __init__(self, name: str, index: int, **kwargs):
+        super().__init__(**kwargs)
+        self.image_name = name
+        self.index = index
+
+    def render(self) -> Text:
+        # Truncate long names
+        display_name = self.image_name
+        if len(display_name) > 30:
+            display_name = display_name[:27] + "..."
+        if self.has_focus:
+            return Text.from_markup(f"[bold #7dcfff]\\[{display_name}][/]")
+        return Text.from_markup(f"[#7dcfff]\\[{display_name}][/]")
+
+    def action_remove(self) -> None:
+        self.post_message(self.Removed(self.index))
+
+    def action_nav_left(self) -> None:
+        self.post_message(self.Navigate(self.index, "left"))
+
+    def action_nav_right(self) -> None:
+        self.post_message(self.Navigate(self.index, "right"))
+
+    def action_nav_down(self) -> None:
+        self.post_message(self.Navigate(self.index, "down"))
+
+    class Removed(Message):
+        """Posted when chip is removed."""
+        def __init__(self, index: int) -> None:
+            self.index = index
+            super().__init__()
+
+    class Navigate(Message):
+        """Posted for chip navigation."""
+        def __init__(self, index: int, direction: str) -> None:
+            self.index = index
+            self.direction = direction
+            super().__init__()
+
+
 class CommandStatus(Static):
     """Shows running command with pulsating dot and optional output preview."""
 
     MAX_OUTPUT_LINES = 3
     MAX_LINE_LENGTH = 80
 
-    def __init__(self, command: str, **kwargs):
+    def __init__(self, command: str, status: str | None = None, output: str | None = None, **kwargs):
         super().__init__(**kwargs)
         self.command = command
         self._pulse = 0
-        self._status: str | None = None
-        self._output: str | None = None
+        self._status: str | None = status
+        self._output: str | None = output
+        self._timer = None
 
     def on_mount(self) -> None:
-        self.set_interval(0.15, self._tick)
+        # Only start pulsing timer if not already completed
+        if self._status is None:
+            self._timer = self.set_interval(0.15, self._tick)
 
     def _tick(self) -> None:
         self._pulse = (self._pulse + 1) % 6
@@ -165,6 +221,10 @@ class CommandStatus(Static):
     def set_status(self, status: str, output: str | None = None) -> None:
         self._status = status
         self._output = output
+        # Stop the pulsing timer
+        if self._timer:
+            self._timer.stop()
+            self._timer = None
         self.refresh()
 
     def render(self) -> Text:
@@ -235,6 +295,7 @@ class ChatPanel(Vertical):
         with VerticalScroll(id=f"{self.panel_id}-scroll", classes="panel-scroll"):
             yield Vertical(id=f"{self.panel_id}-chat", classes="panel-chat")
         with Vertical(classes="panel-input"):
+            yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
             yield Input(
                 placeholder="Message... (/ for commands)",
                 id=f"{self.panel_id}-prompt",
@@ -276,6 +337,17 @@ class ChatPanel(Vertical):
     def get_hint(self) -> Static:
         return self.query_one(f"#{self.panel_id}-hint", Static)
 
+    def get_chips_container(self) -> Horizontal:
+        return self.query_one(f"#{self.panel_id}-chips", Horizontal)
+
+    def refresh_image_chips(self) -> None:
+        """Update image chips display."""
+        container = self.get_chips_container()
+        container.remove_children()
+        base_id = int(time.time() * 1000)
+        for i, img in enumerate(self.pending_images):
+            container.mount(ImageChip(img.name, i, id=f"{self.panel_id}-chip-{base_id}-{i}"))
+
     def add_message(self, role: str, content: str) -> None:
         self.messages.append({"role": role, "content": content})
         chat = self.get_chat_container()
@@ -308,9 +380,43 @@ class ChatPanel(Vertical):
         self.messages = get_session(session_id)
         chat = self.get_chat_container()
         chat.remove_children()
+        widget_id = 0
         for msg in self.messages:
             if msg["role"] not in ("user", "assistant"):
                 continue
+
+            # Handle new segment-based format for assistant messages
+            if msg["role"] == "assistant" and "segments" in msg:
+                for seg in msg["segments"]:
+                    widget_id += 1
+                    if seg.get("type") == "tool":
+                        widget = CommandStatus(
+                            seg.get("command", ""),
+                            status=seg.get("status", "success"),
+                            output=seg.get("output"),
+                            id=f"loaded-{widget_id}"
+                        )
+                        chat.mount(widget)
+                    elif seg.get("type") == "text":
+                        content = seg.get("content", "")
+                        if content:
+                            # Match StreamingText color and spacing
+                            chat.mount(Static(Text.from_markup(f"[#c0caf5]{content}[/]"), id=f"loaded-{widget_id}", classes="loaded-text"))
+                continue
+
+            # Handle legacy format (content + tool_calls)
+            if msg["role"] == "assistant":
+                tool_calls = msg.get("tool_calls", [])
+                for tc in tool_calls:
+                    widget_id += 1
+                    widget = CommandStatus(
+                        tc.get("command", ""),
+                        status=tc.get("status", "success"),
+                        output=tc.get("output"),
+                        id=f"loaded-{widget_id}"
+                    )
+                    chat.mount(widget)
+
             content = msg.get("content")
             if not content:
                 continue

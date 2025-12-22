@@ -23,6 +23,18 @@ def estimate_tokens(text: str) -> int:
 
 def estimate_message_tokens(message: dict) -> int:
     """Estimate tokens for a single message."""
+    # Handle segment-based format
+    if "segments" in message:
+        total = 4
+        for seg in message["segments"]:
+            if seg.get("type") == "text":
+                total += estimate_tokens(seg.get("content", ""))
+            elif seg.get("type") == "tool":
+                # Tool calls add some overhead
+                total += estimate_tokens(seg.get("command", ""))
+                total += estimate_tokens(seg.get("output", ""))
+        return total
+
     content = message.get("content", "")
     if isinstance(content, str):
         return estimate_tokens(content) + 4
@@ -84,9 +96,6 @@ class ContextManager:
         self.messages = messages
         self._token_cache = {}
 
-    def get_messages(self) -> list[dict]:
-        return self.messages
-
     async def compact(self, client: AsyncDedalus) -> str:
         """Compact conversation by summarizing older messages."""
         if len(self.messages) < 4:
@@ -137,8 +146,14 @@ class ContextManager:
         return f"Compacted {len(to_summarize)} messages into summary"
 
     def _create_summary_prompt(self, messages: list[dict]) -> str:
+        def get_content(m: dict) -> str:
+            if "segments" in m:
+                parts = [s.get("content", "") for s in m["segments"] if s.get("type") == "text"]
+                return "".join(parts)[:500]
+            return str(m.get("content", ""))[:500]
+
         conversation = "\n".join(
-            f"{m['role'].upper()}: {m.get('content', '')[:500]}"
+            f"{m['role'].upper()}: {get_content(m)}"
             for m in messages
             if m.get("role") in ("user", "assistant")
         )
@@ -157,7 +172,11 @@ Provide a dense summary (max 500 words):"""
     def _extract_topics(self, messages: list[dict]) -> str:
         words = []
         for m in messages[:5]:
-            content = m.get("content", "")
+            if "segments" in m:
+                parts = [s.get("content", "") for s in m["segments"] if s.get("type") == "text"]
+                content = "".join(parts)
+            else:
+                content = m.get("content", "")
             if isinstance(content, str):
                 words.extend(content.split()[:10])
         return " ".join(words[:20]) + "..."

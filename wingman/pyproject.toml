@@ -1,0 +1,109 @@
+# =============================================================================
+# BUILD SYSTEM
+# =============================================================================
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# =============================================================================
+# PROJECT CONFIGURATION
+# =============================================================================
+
+[project]
+name = "wingman-cli"
+version = "0.1.0"
+description = "AI-powered TUI coding assistant for the terminal"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Aryan Mahajan", email = "aryan@dedalus.ai" },
+    { name = "Dedalus Labs", email = "oss@dedaluslabs.ai" },
+]
+maintainers = [
+    { name = "Aryan Mahajan", email = "aryan@dedalus.ai" },
+]
+keywords = [
+    "ai",
+    "coding",
+    "assistant",
+    "tui",
+    "terminal",
+    "cli",
+    "llm",
+    "gpt",
+    "claude",
+    "gemini",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Terminals",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "dedalus-labs>=0.1.1",
+    "textual>=0.50.0",
+    "rich>=13.0.0",
+    "httpx>=0.27.0",
+    "pillow>=10.0.0",
+]
+
+# =============================================================================
+# PROJECT URLS
+# =============================================================================
+
+[project.urls]
+Homepage = "https://github.com/dedalus-labs/wingman"
+Repository = "https://github.com/dedalus-labs/wingman"
+Issues = "https://github.com/dedalus-labs/wingman/issues"
+Documentation = "https://github.com/dedalus-labs/wingman#readme"
+
+# =============================================================================
+# PROJECT SCRIPTS (CLI ENTRY POINT)
+# =============================================================================
+
+[project.scripts]
+wingman = "wingman.app:main"
+
+# =============================================================================
+# OPTIONAL DEPENDENCIES
+# =============================================================================
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.3.0",
+]
+
+# =============================================================================
+# TOOL CONFIGURATION
+# =============================================================================
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

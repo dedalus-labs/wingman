@@ -8,12 +8,13 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .checkpoints import get_checkpoint_manager, get_current_session
 from .config import get_working_dir
 
-# App instance reference (set by app module)
-_app_instance = None
+# App instance reference (set by app module, avoids circular import)
+_app_instance: Any = None
 
 # Edit approval state
 _edit_approval_event: threading.Event | None = None
@@ -24,7 +25,7 @@ _pending_edit: dict | None = None
 _always_allowed_tools: set[str] = set()
 
 
-def set_app_instance(app) -> None:
+def set_app_instance(app: Any) -> None:
     """Set the app instance for UI interactions."""
     global _app_instance
     _app_instance = app
@@ -66,20 +67,22 @@ class BackgroundProcess:
     started_at: float = field(default_factory=time.time)
 
     def read_output(self) -> None:
-        if self.process.stdout:
-            try:
-                while True:
-                    ready, _, _ = select.select([self.process.stdout], [], [], 0)
-                    if not ready:
-                        break
-                    line = self.process.stdout.readline()
-                    if not line:
-                        break
-                    self.output_buffer.append(line)
-                    if len(self.output_buffer) > 1000:
-                        self.output_buffer = self.output_buffer[-500:]
-            except Exception:
-                pass
+        if not self.process.stdout:
+            return
+        try:
+            while True:
+                ready, _, _ = select.select([self.process.stdout], [], [], 0)
+                if not ready:
+                    break
+                line = self.process.stdout.readline()
+                if not line:
+                    break
+                self.output_buffer.append(line)
+                if len(self.output_buffer) > 1000:
+                    self.output_buffer = self.output_buffer[-500:]
+        except (OSError, ValueError):
+            # Process stdout closed or select interrupted
+            pass
 
     def get_recent_output(self, lines: int = 50) -> str:
         self.read_output()
@@ -94,6 +97,49 @@ _background_processes: dict[str, BackgroundProcess] = {}
 _next_bg_id: int = 1
 _background_requested: bool = False
 _command_widget_counter: int = 0
+
+# Track segments (text + tool calls) in order for session persistence
+_current_segments: list[dict] = []
+
+
+def _notify_mount(command: str, widget_id: str) -> None:
+    """Mount command status widget via app (thread-safe)."""
+    if _app_instance is not None:
+        _app_instance.call_from_thread(_app_instance._mount_command_status, command, widget_id)
+
+
+def _notify_status(widget_id: str, status: str, output: str | None = None) -> None:
+    """Update command status via app (thread-safe)."""
+    if _app_instance is not None:
+        _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, status, output)
+
+
+def get_segments() -> list[dict]:
+    """Get segments (text + tool calls) in order."""
+    return _current_segments.copy()
+
+
+def clear_segments() -> None:
+    """Clear tracked segments (call before each new response)."""
+    _current_segments.clear()
+
+
+def add_text_segment(text: str) -> None:
+    """Add or append to text segment."""
+    if _current_segments and _current_segments[-1].get("type") == "text":
+        _current_segments[-1]["content"] += text
+    else:
+        _current_segments.append({"type": "text", "content": text})
+
+
+def _track_tool_call(command: str, output: str, status: str) -> None:
+    """Track a tool call for session persistence."""
+    _current_segments.append({
+        "type": "tool",
+        "command": command,
+        "output": output,
+        "status": status,
+    })
 
 
 def request_background() -> None:
@@ -129,32 +175,35 @@ def read_file(path: str) -> str:
     if not file_path.is_absolute():
         file_path = get_working_dir() / file_path
 
-    # Show status widget
     _command_widget_counter += 1
     widget_id = f"cmd-status-{_command_widget_counter}"
     display_path = path if len(path) <= 40 else "..." + path[-37:]
-    if _app_instance is not None:
-        _app_instance.call_from_thread(_app_instance._mount_command_status, f"read {display_path}", widget_id)
+    command = f"read {display_path}"
+    _notify_mount(command, widget_id)
 
     if not file_path.exists():
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error")
-        return f"Error: File not found: {path}"
+        output = f"Error: File not found: {path}"
+        _notify_status(widget_id, "error")
+        _track_tool_call(command, output, "error")
+        return output
     if not file_path.is_file():
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error")
-        return f"Error: Not a file: {path}"
+        output = f"Error: Not a file: {path}"
+        _notify_status(widget_id, "error")
+        _track_tool_call(command, output, "error")
+        return output
     try:
         content = file_path.read_text()
         lines = content.split('\n')
         numbered = '\n'.join(f"{i+1:4}│ {line}" for i, line in enumerate(lines))
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "success", f"{len(lines)} lines")
+        output_preview = f"{len(lines)} lines"
+        _notify_status(widget_id, "success", output_preview)
+        _track_tool_call(command, output_preview, "success")
         return numbered
-    except Exception as e:
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error", str(e))
-        return f"Error reading file: {e}"
+    except (OSError, UnicodeDecodeError) as e:
+        output = f"Error reading file: {e}"
+        _notify_status(widget_id, "error", str(e))
+        _track_tool_call(command, output, "error")
+        return output
 
 
 def write_file(path: str, content: str) -> str:
@@ -164,46 +213,66 @@ def write_file(path: str, content: str) -> str:
     if not file_path.is_absolute():
         file_path = get_working_dir() / file_path
 
-    # Show status widget
     _command_widget_counter += 1
     widget_id = f"cmd-status-{_command_widget_counter}"
     display_path = path if len(path) <= 40 else "..." + path[-37:]
-    if _app_instance is not None:
-        _app_instance.call_from_thread(_app_instance._mount_command_status, f"write {display_path}", widget_id)
+    command = f"write {display_path}"
+    _notify_mount(command, widget_id)
 
     if file_path.exists():
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error")
-        return f"Error: File already exists: {path}. Use edit_file to modify existing files."
+        output = f"Error: File already exists: {path}. Use edit_file to modify existing files."
+        _notify_status(widget_id, "error")
+        _track_tool_call(command, output, "error")
+        return output
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
         lines = len(content.split('\n'))
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "success", f"Created ({lines} lines)")
+        output_preview = f"Created ({lines} lines)"
+        _notify_status(widget_id, "success", output_preview)
+        _track_tool_call(command, output_preview, "success")
         return f"Created: {path}"
-    except Exception as e:
-        if _app_instance is not None:
-            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, "error", str(e))
-        return f"Error writing file: {e}"
+    except OSError as e:
+        output = f"Error writing file: {e}"
+        _notify_status(widget_id, "error", str(e))
+        _track_tool_call(command, output, "error")
+        return output
 
 
 def edit_file(path: str, old_string: str, new_string: str) -> str:
     """Edit a file by replacing old_string with new_string."""
-    global _edit_approval_event, _edit_approval_result, _pending_edit
+    global _edit_approval_event, _edit_approval_result, _pending_edit, _command_widget_counter
 
     file_path = Path(path)
     if not file_path.is_absolute():
         file_path = get_working_dir() / file_path
+
+    _command_widget_counter += 1
+    widget_id = f"cmd-status-{_command_widget_counter}"
+    display_path = path if len(path) <= 40 else "..." + path[-37:]
+    command = f"edit {display_path}"
+    _notify_mount(command, widget_id)
+
     if not file_path.exists():
-        return f"Error: File not found: {path}"
+        output = f"Error: File not found: {path}"
+        _notify_status(widget_id, "error")
+        _track_tool_call(command, output, "error")
+        return output
+
     try:
         content = file_path.read_text()
         if old_string not in content:
-            return f"Error: old_string not found in {path}. Read the file first to see exact content."
+            output = f"Error: old_string not found in {path}. Read the file first to see exact content."
+            _notify_status(widget_id, "error")
+            _track_tool_call(command, output, "error")
+            return output
         if content.count(old_string) > 1:
-            return f"Error: old_string appears multiple times. Be more specific."
+            output = f"Error: old_string appears multiple times. Be more specific."
+            _notify_status(widget_id, "error")
+            _track_tool_call(command, output, "error")
+            return output
 
+        # Request user approval via diff modal
         if _app_instance is not None:
             _edit_approval_event = threading.Event()
             _pending_edit = {
@@ -215,7 +284,10 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             _edit_approval_event.wait()
 
             if not _edit_approval_result:
-                return f"Edit rejected by user: {path}"
+                output = f"Edit rejected by user: {path}"
+                _notify_status(widget_id, "error")
+                _track_tool_call(command, output, "error")
+                return output
 
         cp_manager = get_checkpoint_manager()
         cp = cp_manager.create([file_path], f"Before edit: {file_path.name}", session_id=get_current_session())
@@ -224,9 +296,15 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         file_path.write_text(new_content)
 
         cp_note = f" (checkpoint: {cp.id})" if cp else ""
-        return f"Edited: {path}{cp_note}"
-    except Exception as e:
-        return f"Error editing file: {e}"
+        result = f"Edited: {path}{cp_note}"
+        _notify_status(widget_id, "success", "edited")
+        _track_tool_call(command, "edited", "success")
+        return result
+    except OSError as e:
+        output = f"Error editing file: {e}"
+        _notify_status(widget_id, "error", str(e))
+        _track_tool_call(command, str(e), "error")
+        return output
 
 
 def _list_files_sync(pattern: str, base: Path, working_dir: Path) -> list[str]:
@@ -251,7 +329,8 @@ def _list_files_sync(pattern: str, base: Path, working_dir: Path) -> list[str]:
 
 async def list_files(pattern: str = "**/*", path: str = ".") -> str:
     """List files matching a glob pattern."""
-    widget_id = await _show_command_widget(f"ls {pattern}")
+    command = f"ls {pattern}"
+    widget_id = await _show_command_widget(command)
     base = Path(path)
     if not base.is_absolute():
         base = get_working_dir() / base
@@ -262,12 +341,17 @@ async def list_files(pattern: str = "**/*", path: str = ".") -> str:
         )
         result = '\n'.join(filtered) if filtered else f"No files matching: {pattern}"
         await _update_command_status(widget_id, "success", result)
+        _track_tool_call(command, result, "success")
         return result
     except asyncio.TimeoutError:
-        await _update_command_status(widget_id, "error", "Timed out after 15s")
+        output = "Timed out after 15s"
+        await _update_command_status(widget_id, "error", output)
+        _track_tool_call(command, output, "error")
         return f"Listing timed out after 15s. Try a more specific pattern."
     except Exception as e:
-        await _update_command_status(widget_id, "error", str(e))
+        output = str(e)
+        await _update_command_status(widget_id, "error", output)
+        _track_tool_call(command, output, "error")
         return f"Error listing files: {e}"
 
 
@@ -311,7 +395,8 @@ def _search_files_sync(pattern: str, base: Path, file_pattern: str, working_dir:
 
 async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     """Search for a regex pattern in files."""
-    widget_id = await _show_command_widget(f"grep \"{pattern}\"")
+    command = f"grep \"{pattern}\""
+    widget_id = await _show_command_widget(command)
     base = Path(path)
     if not base.is_absolute():
         base = get_working_dir() / base
@@ -322,15 +407,22 @@ async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -
         )
         result = '\n'.join(results) if results else f"No matches for: {pattern}"
         await _update_command_status(widget_id, "success", result)
+        _track_tool_call(command, result, "success")
         return result
     except asyncio.TimeoutError:
-        await _update_command_status(widget_id, "error", "Timed out after 30s")
+        output = "Timed out after 30s"
+        await _update_command_status(widget_id, "error", output)
+        _track_tool_call(command, output, "error")
         return f"Search timed out after 30s. Try a more specific path or pattern."
     except re.error as e:
-        await _update_command_status(widget_id, "error", f"Invalid regex: {e}")
-        return f"Invalid regex: {e}"
+        output = f"Invalid regex: {e}"
+        await _update_command_status(widget_id, "error", output)
+        _track_tool_call(command, output, "error")
+        return output
     except Exception as e:
-        await _update_command_status(widget_id, "error", str(e))
+        output = str(e)
+        await _update_command_status(widget_id, "error", output)
+        _track_tool_call(command, output, "error")
         return f"Error searching: {e}"
 
 
@@ -339,6 +431,7 @@ async def run_command(command: str) -> str:
     global _background_requested, _next_bg_id
 
     if not await request_tool_approval("run_command", f"$ {command}"):
+        _track_tool_call(f"$ {command}", "rejected by user", "error")
         return "Command rejected by user."
 
     _background_requested = False
@@ -376,6 +469,7 @@ async def run_command(command: str) -> str:
                 _background_processes[bg_id] = bg_proc
 
                 await _update_command_status(widget_id, "backgrounded")
+                _track_tool_call(f"$ {command}", "backgrounded", "success")
                 return f"[Backgrounded: {bg_id}] {command}\nUse get_process_output('{bg_id}') to check status."
 
             if proc.poll() is not None:
@@ -395,6 +489,7 @@ async def run_command(command: str) -> str:
                 proc.terminate()
                 output = "".join(output_lines[-50:])
                 await _update_command_status(widget_id, "error", f"Timed out after {timeout}s")
+                _track_tool_call(f"$ {command}", f"Timed out after {timeout}s", "error")
                 return f"Error: Command timed out after {timeout}s\n" + output
 
         output = "".join(output_lines)
@@ -402,11 +497,14 @@ async def run_command(command: str) -> str:
             output = output[:10000] + "\n... (truncated)"
 
         status = "success" if proc.returncode == 0 else "error"
-        await _update_command_status(widget_id, status, output or "(no output)")
-        return output or "(no output)"
+        output_display = output or "(no output)"
+        await _update_command_status(widget_id, status, output_display)
+        _track_tool_call(f"$ {command}", output_display, status)
+        return output_display
 
     except Exception as e:
         await _update_command_status(widget_id, "error", str(e))
+        _track_tool_call(f"$ {command}", str(e), "error")
         return f"Error running command: {e}"
 
 

@@ -161,17 +161,6 @@ class CheckpointManager:
                 diffs[fpath] = f"[Error reading {fpath}: {e}]"
         return diffs
 
-    def clear_all(self) -> int:
-        count = len(self._checkpoints)
-        for cp in self._checkpoints:
-            cp_dir = CHECKPOINTS_DIR / cp.id
-            if cp_dir.exists():
-                shutil.rmtree(cp_dir)
-        self._checkpoints = []
-        self._counter = 0
-        self._save_index()
-        return count
-
 
 # Global state
 _checkpoint_manager: CheckpointManager | None = None

@@ -15,8 +15,8 @@ SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 # App metadata
 APP_NAME = "Wingman"
-APP_VERSION = "0.0.1"
-APP_CREDIT = "Dedalus Labs · made by Aryan Mahajan"
+APP_VERSION = "0.1.0"
+APP_CREDIT = "Dedalus Labs"
 
 # API
 DEDALUS_SITE_URL = "https://dedaluslabs.ai"
@@ -88,7 +88,6 @@ COMMANDS = [
     ("/history", "View checkpoints"),
     ("/rollback", "Restore checkpoint"),
     ("/diff", "Show changes"),
-    ("/image", "Attach image"),
     ("/compact", "Compact context"),
     ("/context", "Context usage"),
     ("/mcp", "MCP servers"),

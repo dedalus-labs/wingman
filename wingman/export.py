@@ -10,12 +10,26 @@ def export_session_markdown(messages: list[dict], session_id: str | None = None)
     lines = [f"# Chat Export{f': {session_id}' if session_id else ''}", ""]
     for msg in messages:
         role = msg.get("role", "unknown")
-        content = msg.get("content", "")
         if role not in ("user", "assistant"):
             continue
-        if isinstance(content, list):
-            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            content = " ".join(text_parts) or "(image attachment)"
+
+        # Handle segment-based format
+        if "segments" in msg:
+            parts = []
+            for seg in msg["segments"]:
+                if seg.get("type") == "text":
+                    parts.append(seg.get("content", ""))
+                elif seg.get("type") == "tool":
+                    cmd = seg.get("command", "")
+                    output = seg.get("output", "")
+                    parts.append(f"\n```\n$ {cmd}\n→ {output}\n```\n")
+            content = "".join(parts)
+        else:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                content = " ".join(text_parts) or "(image attachment)"
+
         if role == "user":
             lines.append(f"## User\n\n{content}\n")
         else:

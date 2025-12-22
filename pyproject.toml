@@ -94,7 +94,10 @@ dev = [
 # =============================================================================
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["wingman"]
+
+[tool.uv]
+package = true
 
 [tool.ruff]
 line-length = 120

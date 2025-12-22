@@ -127,7 +127,24 @@ class CheckpointManager:
                 restored.append(fpath)
             except Exception:
                 continue
+
+        if restored:
+            self._remove_checkpoint(checkpoint_id)
+
         return restored
+
+    def _remove_checkpoint(self, checkpoint_id: str) -> None:
+        """Remove a checkpoint after rollback (user is now at that state)."""
+        idx = next((i for i, cp in enumerate(self._checkpoints) if cp.id == checkpoint_id), None)
+        if idx is None:
+            return
+
+        cp = self._checkpoints.pop(idx)
+        cp_dir = CHECKPOINTS_DIR / cp.id
+        if cp_dir.exists():
+            shutil.rmtree(cp_dir)
+
+        self._save_index()
 
     def list_recent(self, n: int = 10, session_id: str | None = None) -> list[Checkpoint]:
         if not session_id:

@@ -23,24 +23,21 @@ from .config import (
     MARKETPLACE_SERVERS,
     MODELS,
     fetch_marketplace_servers,
-    get_working_dir,
     load_api_key,
-    set_working_dir,
 )
 from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
 from .memory import clear_memory, load_memory, append_memory
-from .sessions import get_session, load_sessions, rename_session, save_session
+from .sessions import delete_session, get_session, load_sessions, rename_session, save_session, save_session_working_dir
 from .tools import (
     CODING_SYSTEM_PROMPT,
-    FILE_TOOLS,
+    create_tools,
     add_text_segment,
     clear_segments,
     get_background_processes,
     get_pending_edit,
     get_segments,
-    list_files,
     list_processes,
     request_background,
     set_app_instance,
@@ -141,13 +138,40 @@ class WingmanApp(App):
     ToolApproval {
         height: auto;
         margin: 0 0 1 0;
-        padding: 1;
-        background: #16161e;
-        border: solid #3b3d4d;
+        padding: 1 2;
+        background: #1a1b26;
+        border-left: solid #e0af68;
     }
 
     ToolApproval:focus {
-        border: solid #7aa2f7;
+        border-left: solid #7aa2f7;
+    }
+
+    ToolApproval #approval-input-row {
+        height: auto;
+        margin-top: 1;
+    }
+
+    ToolApproval #approval-prompt {
+        width: auto;
+        height: 1;
+        padding: 0;
+    }
+
+    ToolApproval #approval-feedback {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: none;
+        height: 1;
+    }
+
+    ToolApproval #approval-feedback:focus {
+        border: none;
+    }
+
+    .hidden {
+        display: none;
     }
 
     /* Input area */
@@ -375,7 +399,15 @@ class WingmanApp(App):
         panel_count = len(self.panels)
         panel_text = f" │ Panel {self.active_panel_idx + 1}/{panel_count}" if panel_count > 1 else ""
 
-        status = f"{session_text} │ {model_short}{code_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}"
+        # Working directory (shortened)
+        cwd = panel.working_dir if panel else Path.cwd()
+        try:
+            cwd_display = f"~/{cwd.relative_to(Path.home())}"
+        except ValueError:
+            cwd_display = str(cwd)
+        cwd_text = f" │ [dim]{cwd_display}[/]"
+
+        status = f"{session_text} │ {model_short}{code_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 
     def _refresh_sessions(self) -> None:
@@ -389,6 +421,9 @@ class WingmanApp(App):
     def _load_session(self, session_id: str) -> None:
         """Load a session into the active panel."""
         if self.active_panel:
+            if self.active_panel._generating:
+                self._show_info("[#e0af68]Wait for response to complete before switching sessions[/]")
+                return
             self.active_panel.load_session(session_id)
             self._update_status()
 
@@ -612,7 +647,7 @@ class WingmanApp(App):
 
         # Create new session if none exists
         if not panel.session_id:
-            panel.session_id = f"chat-{int(time.time())}"
+            panel.session_id = f"chat-{int(time.time() * 1000)}"
             save_session(panel.session_id, [])
             self._refresh_sessions()
             self._update_status()
@@ -658,7 +693,7 @@ class WingmanApp(App):
                 messages[-1] = create_image_message_from_cache(text, images)
 
             if self.coding_mode:
-                system_content = CODING_SYSTEM_PROMPT.format(cwd=get_working_dir())
+                system_content = CODING_SYSTEM_PROMPT.format(cwd=panel.working_dir)
                 # Include project memory if available
                 memory = load_memory()
                 if memory:
@@ -678,16 +713,17 @@ class WingmanApp(App):
             if panel.mcp_servers:
                 kwargs["mcp_servers"] = panel.mcp_servers
             if self.coding_mode:
-                kwargs["tools"] = FILE_TOOLS
+                kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
 
             # Set session context for checkpoint tracking
             set_current_session(panel.session_id)
-            clear_segments()  # Clear segment tracking for new response
+            clear_segments(panel.panel_id)  # Clear segment tracking for new response
             chat = panel.get_chat_container()
 
             streaming_widget = None
             widget_id = int(time.time() * 1000)  # Unique base ID per message
 
+            panel._generating = True
             try:
                 stream = self.runner.run(**kwargs)
                 async for chunk in stream:
@@ -706,11 +742,12 @@ class WingmanApp(App):
                                 widget_id += 1
                                 streaming_widget = StreamingText(id=f"streaming-{widget_id}")
                                 chat.mount(streaming_widget, before=thinking)
-                            add_text_segment(delta.content)  # Track text segment
+                            add_text_segment(delta.content, panel.panel_id)  # Track text segment
                             streaming_widget.append_text(delta.content)
                             panel.get_scroll_container().scroll_end(animate=False)
                             await asyncio.sleep(0)
             finally:
+                panel._generating = False
                 set_current_session(None)
 
             if streaming_widget is not None:
@@ -721,7 +758,7 @@ class WingmanApp(App):
             except Exception:
                 pass
 
-            segments = get_segments()
+            segments = get_segments(panel.panel_id)
             if segments:
                 panel.messages.append({"role": "assistant", "segments": segments})
                 save_session(panel.session_id, panel.messages)
@@ -773,16 +810,23 @@ class WingmanApp(App):
             pending["new_string"],
         )
 
-    async def request_tool_approval(self, tool_name: str, command: str) -> str:
-        """Request approval for a tool. Returns 'yes', 'always', or 'no'."""
-        panel = self.active_panel
+    async def request_tool_approval(self, tool_name: str, command: str, panel_id: str | None = None) -> tuple[str, str]:
+        """Request approval for a tool. Returns (result, feedback) where result is 'yes', 'always', or 'no'."""
+        panel = None
+        if panel_id:
+            for p in self.panels:
+                if p.panel_id == panel_id:
+                    panel = p
+                    break
         if not panel:
-            return "yes"
+            panel = self.active_panel
+        if not panel:
+            return ("yes", "")
         chat = panel.get_chat_container()
-        widget = ToolApproval(tool_name, command, id="tool-approval")
-        # Mount before thinking spinner so it stays at bottom
+        widget = ToolApproval(tool_name, command, id=f"tool-approval-{panel_id or 'default'}")
+        # Mount before thinking spinner (search within this panel's chat only)
         try:
-            thinking = self.query_one("#thinking", Thinking)
+            thinking = chat.query_one(Thinking)
             chat.mount(widget, before=thinking)
         except Exception:
             chat.mount(widget)
@@ -811,7 +855,8 @@ class WingmanApp(App):
             self.active_panel.set_active(False)
         # Activate new
         self.active_panel_idx = idx
-        self.panels[idx].set_active(True)
+        new_panel = self.panels[idx]
+        new_panel.set_active(True)
         self._update_status()
 
     def action_split_panel(self) -> None:
@@ -831,12 +876,16 @@ class WingmanApp(App):
 
     def _refresh_welcome_art(self) -> None:
         """Re-render welcome art on panels that have it (after resize)."""
-        for p in self.panels:
-            try:
-                p.query_one(".panel-welcome")
-                p._show_welcome()
-            except Exception:
-                pass
+        def do_refresh():
+            force_compact = len(self.panels) > 1
+            for p in self.panels:
+                try:
+                    p.query_one(".panel-welcome")
+                    p._show_welcome(force_compact=force_compact)
+                except Exception:
+                    pass
+        # Extra frame delay to ensure layout is fully recalculated
+        self.call_after_refresh(do_refresh)
 
     def on_resize(self, event) -> None:
         """Handle terminal resize - refresh welcome art."""
@@ -893,22 +942,31 @@ class WingmanApp(App):
         if len(self.panels) >= 4:
             self._set_active_panel(3)
 
-    def _mount_command_status(self, command: str, widget_id: str) -> None:
-        """Mount command status widget in active panel, before Thinking spinner."""
-        panel = self.active_panel
+    def _mount_command_status(self, command: str, widget_id: str, panel_id: str | None = None) -> None:
+        """Mount command status widget in the specified panel, before Thinking spinner."""
+        # Find panel by ID, fall back to active panel
+        panel = None
+        if panel_id:
+            for p in self.panels:
+                if p.panel_id == panel_id:
+                    panel = p
+                    break
+        if not panel:
+            panel = self.active_panel
         if not panel:
             return
+
         chat = panel.get_chat_container()
         widget = CommandStatus(command, id=widget_id)
-        # Mount before thinking spinner so it stays at bottom
+        # Mount before thinking spinner (search within this panel's chat only)
         try:
-            thinking = self.query_one("#thinking", Thinking)
+            thinking = chat.query_one(Thinking)
             chat.mount(widget, before=thinking)
         except Exception:
             chat.mount(widget)
         panel.get_scroll_container().scroll_end(animate=False)
 
-    def _update_command_status(self, widget_id: str, status: str, output: str | None = None) -> None:
+    def _update_command_status(self, widget_id: str, status: str, output: str | None = None, panel_id: str | None = None) -> None:
         """Update command status widget with final status and optional output."""
         try:
             widget = self.query_one(f"#{widget_id}", CommandStatus)
@@ -939,6 +997,24 @@ class WingmanApp(App):
         else:
             self._show_info("Usage: /rename <new-name>")
 
+    def _cmd_delete(self, arg: str) -> None:
+        panel = self.active_panel
+        if not panel:
+            return
+        session_id = arg.strip() if arg else panel.session_id
+        if not session_id:
+            self._show_info("No session to delete")
+            return
+        delete_session(session_id)
+        self._refresh_sessions()
+        if panel.session_id == session_id:
+            panel.session_id = None
+            panel.clear_chat()
+            panel.working_dir = Path.cwd()
+            panel._show_welcome()
+        self._show_info(f"Deleted session: {session_id}")
+        self._update_status()
+
     def _cmd_mcp(self, arg: str) -> None:
         panel = self.active_panel
         if not panel:
@@ -961,13 +1037,20 @@ class WingmanApp(App):
         self._update_status()
 
     def _cmd_cd(self, arg: str) -> None:
+        panel = self.active_panel
+        if not panel:
+            return
+        cwd = panel.working_dir
         if not arg:
-            self._show_info(f"Working directory: {get_working_dir()}")
+            self._show_info(f"Working directory: {cwd}")
         else:
-            new_dir = Path(arg).expanduser().resolve()
+            new_dir = (cwd / Path(arg).expanduser()).resolve()
             if new_dir.is_dir():
-                set_working_dir(new_dir)
-                self._show_info(f"Changed to: {get_working_dir()}")
+                panel.working_dir = new_dir
+                # Save to session if one exists
+                if panel.session_id:
+                    save_session_working_dir(panel.session_id, str(new_dir))
+                self._show_info(f"Changed to: {new_dir}")
                 self._update_status()
             else:
                 self._show_info(f"Not a directory: {arg}")
@@ -1066,7 +1149,7 @@ class WingmanApp(App):
         else:
             content = export_session_markdown(panel.messages, session_name)
             filename = f"{session_name}.md"
-        export_path = get_working_dir() / filename
+        export_path = panel.working_dir / filename
         export_path.write_text(content)
         self._show_info(f"[#9ece6a]Exported to:[/] {export_path}")
 
@@ -1075,9 +1158,11 @@ class WingmanApp(App):
             self._show_info("Usage: /import <path>")
             return
         panel = self.active_panel
+        if not panel:
+            return
         import_path = Path(arg).expanduser()
         if not import_path.is_absolute():
-            import_path = get_working_dir() / import_path
+            import_path = panel.working_dir / import_path
         messages = import_session_from_file(import_path)
         if messages and panel:
             count = 0
@@ -1110,15 +1195,16 @@ class WingmanApp(App):
             "clear": lambda: self.action_clear_chat(),
             "help": lambda: self.action_help(),
             "quit": lambda: self.exit(),
-            "ls": lambda: self._do_ls(arg or "*"),
-            "ps": lambda: self._show_info(f"[bold #7aa2f7]Background Processes[/]\n{list_processes()}"),
-            "processes": lambda: self._show_info(f"[bold #7aa2f7]Background Processes[/]\n{list_processes()}"),
-            "kill": lambda: self._show_info(stop_process(arg) if arg else "Usage: /kill <process_id>"),
+            "ls": lambda: self._do_ls(arg or "*", self.active_panel.working_dir if self.active_panel else Path.cwd()),
+            "ps": lambda: self._show_info(f"[bold #7aa2f7]Background Processes[/]\n{list_processes(self.active_panel.panel_id if self.active_panel else None)}"),
+            "processes": lambda: self._show_info(f"[bold #7aa2f7]Background Processes[/]\n{list_processes(self.active_panel.panel_id if self.active_panel else None)}"),
+            "kill": lambda: self._show_info(stop_process(arg, self.active_panel.panel_id if self.active_panel else None) if arg else "Usage: /kill <process_id>"),
         }
 
         # Commands with complex logic
         complex_commands = {
             "rename": self._cmd_rename,
+            "delete": self._cmd_delete,
             "mcp": self._cmd_mcp,
             "code": self._cmd_code,
             "cd": self._cmd_cd,
@@ -1138,10 +1224,11 @@ class WingmanApp(App):
             self._show_info(f"Unknown command: {command}")
 
     @work(thread=False)
-    async def _do_ls(self, pattern: str) -> None:
+    async def _do_ls(self, pattern: str, working_dir: Path) -> None:
         """List files asynchronously."""
-        result = await list_files(pattern)
-        self._show_info(f"[dim]{get_working_dir()}[/]\n{result}")
+        from .tools import _list_files_impl
+        result = await _list_files_impl(pattern, ".", working_dir)
+        self._show_info(f"[dim]{working_dir}[/]\n{result}")
 
     @on(Tree.NodeSelected, "#sessions")
     def on_session_select(self, event: Tree.NodeSelected) -> None:
@@ -1153,6 +1240,9 @@ class WingmanApp(App):
         """Start a new chat in the active panel."""
         panel = self.active_panel
         if not panel:
+            return
+        if panel._generating:
+            self._show_info("[#e0af68]Wait for response to complete before starting new chat[/]")
             return
         panel.session_id = None
         panel.context.clear()
@@ -1294,7 +1384,7 @@ class WingmanApp(App):
   [#7aa2f7]Ctrl+Z[/]  Undo (restore last checkpoint)
   [#7aa2f7]Ctrl+B[/]  Background running command
 
-[dim]Working dir: {get_working_dir()}[/]
+[dim]Working dir: {panel.working_dir if panel else Path.cwd()}[/]
 [dim]Panels: {panel_count} · Background: {bg_count} · Checkpoints: {cp_count} · Images: {img_count}[/]"""
         self._show_info(help_text)
 

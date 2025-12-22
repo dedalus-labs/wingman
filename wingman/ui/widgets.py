@@ -2,6 +2,7 @@
 
 import random
 import time
+from pathlib import Path
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -14,7 +15,7 @@ from textual.widgets import Input, Static
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import CachedImage, create_image_message_from_cache
-from ..sessions import get_session, save_session
+from ..sessions import get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
 
 
@@ -73,13 +74,12 @@ class StreamingText(Static):
         self.update(Text.from_markup(f"[#c0caf5]{self._content}[/]"))
 
 
-class ToolApproval(Static, can_focus=True):
+class ToolApproval(Vertical, can_focus=True):
     """Inline tool approval prompt like Claude Code."""
 
     BINDINGS = [
-        Binding("1", "select_yes", "Yes", show=False),
         Binding("y", "select_yes", "Yes", show=False),
-        Binding("2", "select_always", "Always", show=False),
+        Binding("a", "select_always", "Always", show=False),
         Binding("n", "select_no", "No", show=False),
         Binding("escape", "select_no", "No", show=False),
         Binding("up", "move_up", "Up", show=False),
@@ -91,57 +91,90 @@ class ToolApproval(Static, can_focus=True):
         super().__init__(**kwargs)
         self.tool_name = tool_name
         self.command = command
-        self.result: str | None = None  # "yes", "always", "no"
+        self.result: tuple[str, str] | None = None  # ("yes"/"always"/"no", feedback)
         self._selected = 0  # 0=yes, 1=always, 2=no
+        self._feedback_mode = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="approval-content")
+        with Horizontal(id="approval-input-row", classes="hidden"):
+            yield Static("[#7aa2f7]>[/] ", id="approval-prompt")
+            yield Input(placeholder="What should I do instead?", id="approval-feedback")
 
     def on_mount(self) -> None:
+        self._update_display()
         self.focus()
 
-    def render(self) -> Text:
-        options = [
-            ("1.", "Yes"),
-            ("2.", "Yes, always allow (this session)"),
-            ("n.", "No"),
-        ]
-        lines = [
-            f"[bold #e0af68]{self.tool_name}[/]",
-            f"  [#a9b1d6]{self.command}[/]",
-            "",
-        ]
-        for i, (key, label) in enumerate(options):
-            if i == self._selected:
-                if i == 2:
-                    lines.append(f"[#f7768e]› {key}[/] [bold]{label}[/]")
+    def _update_display(self) -> None:
+        content = self.query_one("#approval-content", Static)
+        input_row = self.query_one("#approval-input-row", Horizontal)
+        feedback_input = self.query_one("#approval-feedback", Input)
+
+        if self._feedback_mode:
+            lines = [
+                f"[bold #e0af68]{self.tool_name}[/]",
+                f"  [dim]{self.command}[/]",
+            ]
+            content.update(Text.from_markup("\n".join(lines)))
+            input_row.remove_class("hidden")
+            feedback_input.focus()
+        else:
+            options = [
+                ("y.", "Yes", "#9ece6a"),
+                ("a.", "Yes, always allow this session", "#9ece6a"),
+                ("n.", "No, and tell me what to do differently", "#f7768e"),
+            ]
+            lines = [
+                f"[bold #e0af68]{self.tool_name}[/]",
+                f"  [dim]{self.command}[/]",
+                "",
+                "[#a9b1d6]Do you want to proceed?[/]",
+            ]
+            for i, (key, label, color) in enumerate(options):
+                if i == self._selected:
+                    lines.append(f"[{color}]› {key}[/] [bold]{label}[/]")
                 else:
-                    lines.append(f"[#9ece6a]› {key}[/] [bold]{label}[/]")
-            else:
-                lines.append(f"[dim]  {key} {label}[/]")
-        return Text.from_markup("\n".join(lines))
+                    lines.append(f"[dim]  {key} {label}[/]")
+            content.update(Text.from_markup("\n".join(lines)))
+            input_row.add_class("hidden")
 
     def action_move_up(self) -> None:
-        self._selected = (self._selected - 1) % 3
-        self.refresh()
+        if not self._feedback_mode:
+            self._selected = (self._selected - 1) % 3
+            self._update_display()
 
     def action_move_down(self) -> None:
-        self._selected = (self._selected + 1) % 3
-        self.refresh()
+        if not self._feedback_mode:
+            self._selected = (self._selected + 1) % 3
+            self._update_display()
 
     def action_confirm(self) -> None:
+        if self._feedback_mode:
+            return
         if self._selected == 0:
-            self.result = "yes"
+            self.result = ("yes", "")
         elif self._selected == 1:
-            self.result = "always"
+            self.result = ("always", "")
         else:
-            self.result = "no"
+            self._feedback_mode = True
+            self._update_display()
 
     def action_select_yes(self) -> None:
-        self.result = "yes"
+        if not self._feedback_mode:
+            self.result = ("yes", "")
 
     def action_select_always(self) -> None:
-        self.result = "always"
+        if not self._feedback_mode:
+            self.result = ("always", "")
 
     def action_select_no(self) -> None:
-        self.result = "no"
+        if not self._feedback_mode:
+            self._feedback_mode = True
+            self._update_display()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "approval-feedback":
+            self.result = ("no", event.value or "")
 
 
 class ImageChip(Static, can_focus=True):
@@ -282,6 +315,8 @@ class ChatPanel(Vertical):
         self.pending_images: list[CachedImage] = []
         self.mcp_servers: list[str] = []
         self._is_active = False
+        self._generating = False
+        self.working_dir: Path = Path.cwd()
 
     @property
     def messages(self) -> list[dict]:
@@ -306,9 +341,10 @@ class ChatPanel(Vertical):
     def on_mount(self) -> None:
         self.call_after_refresh(self._show_welcome)
 
-    def _show_welcome(self) -> None:
+    def _show_welcome(self, force_compact: bool = False) -> None:
         chat = self.query_one(f"#{self.panel_id}-chat", Vertical)
-        art = WELCOME_ART if self.size.width >= 70 else WELCOME_ART_COMPACT
+        use_big = self.size.width >= 70 and not force_compact
+        art = WELCOME_ART if use_big else WELCOME_ART_COMPACT
         welcome = f"""{art}
 [dim]v{APP_VERSION} · {APP_CREDIT}[/]
 
@@ -378,8 +414,12 @@ class ChatPanel(Vertical):
     def load_session(self, session_id: str) -> None:
         self.session_id = session_id
         self.messages = get_session(session_id)
+        # Restore working directory from session (or reset to cwd)
+        saved_dir = get_session_working_dir(session_id)
+        self.working_dir = Path(saved_dir) if saved_dir else Path.cwd()
         chat = self.get_chat_container()
         chat.remove_children()
+        base_id = int(time.time() * 1000)
         widget_id = 0
         for msg in self.messages:
             if msg["role"] not in ("user", "assistant"):
@@ -394,14 +434,14 @@ class ChatPanel(Vertical):
                             seg.get("command", ""),
                             status=seg.get("status", "success"),
                             output=seg.get("output"),
-                            id=f"loaded-{widget_id}"
+                            id=f"loaded-{base_id}-{widget_id}"
                         )
                         chat.mount(widget)
                     elif seg.get("type") == "text":
                         content = seg.get("content", "")
                         if content:
                             # Match StreamingText color and spacing
-                            chat.mount(Static(Text.from_markup(f"[#c0caf5]{content}[/]"), id=f"loaded-{widget_id}", classes="loaded-text"))
+                            chat.mount(Static(Text.from_markup(f"[#c0caf5]{content}[/]"), id=f"loaded-{base_id}-{widget_id}", classes="loaded-text"))
                 continue
 
             # Handle legacy format (content + tool_calls)
@@ -413,7 +453,7 @@ class ChatPanel(Vertical):
                         tc.get("command", ""),
                         status=tc.get("status", "success"),
                         output=tc.get("output"),
-                        id=f"loaded-{widget_id}"
+                        id=f"loaded-{base_id}-{widget_id}"
                     )
                     chat.mount(widget)
 

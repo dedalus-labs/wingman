@@ -21,17 +21,6 @@ APP_CREDIT = "Dedalus Labs"
 # API
 DEDALUS_SITE_URL = "https://dedaluslabs.ai"
 
-# Working directory (mutable via set_working_dir)
-_working_dir = Path.cwd()
-
-
-def get_working_dir() -> Path:
-    return _working_dir
-
-
-def set_working_dir(path: Path) -> None:
-    global _working_dir
-    _working_dir = path
 
 # Models
 DEFAULT_MODELS = [
@@ -77,6 +66,7 @@ MARKETPLACE_SERVERS: list[dict] = []
 COMMANDS = [
     ("/new", "Start new chat"),
     ("/rename", "Rename session"),
+    ("/delete", "Delete session"),
     ("/split", "Split panel"),
     ("/close", "Close panel"),
     ("/model", "Switch model"),

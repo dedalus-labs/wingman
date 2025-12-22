@@ -18,12 +18,30 @@ class CachedImage:
 
 def is_image_path(text: str) -> Path | None:
     """Check if text is a valid image file path."""
+    import re
+
+    # Strip whitespace and surrounding quotes
     text = text.strip().strip("'\"")
     if not text:
         return None
+
+    # Quick check: does it end with an image extension?
+    if not any(text.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+        return None
+
+    # Try the path as-is
     path = Path(text).expanduser()
-    if path.exists() and path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+    if path.exists() and path.is_file():
         return path
+
+    # macOS screenshots use narrow no-break space (\u202f) before AM/PM
+    # Terminals strip this when pasting, so try reinserting it
+    fixed = re.sub(r"(\d)(AM|PM)", "\\1\u202f\\2", text, flags=re.IGNORECASE)
+    if fixed != text:
+        path = Path(fixed).expanduser()
+        if path.exists() and path.is_file():
+            return path
+
     return None
 
 

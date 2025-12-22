@@ -45,39 +45,33 @@ pipx install wingman-cli
 
 3. **Start chatting** - Type your message and press Enter
 
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+N` | New chat |
-| `Ctrl+S` | Toggle sidebar |
-| `Ctrl+M` | Select model |
-| `Ctrl+G` | Add MCP server |
-| `Ctrl+L` | Clear chat |
-| `Ctrl+Z` | Undo (rollback) |
-| `Ctrl+B` | Background command |
-| `Ctrl+\` | Split panel |
-| `Ctrl+W` | Close panel |
-| `Ctrl+C` | Quit |
-| `F1` | Help |
-
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `/new` | Start new chat |
+| `/rename <name>` | Rename session |
+| `/delete` | Delete session |
+| `/split` | Split panel |
+| `/close` | Close panel |
 | `/model` | Switch model |
 | `/code` | Toggle coding mode |
 | `/cd <path>` | Change directory |
 | `/ls` | List files |
-| `/history` | List checkpoints |
+| `/ps` | List processes |
+| `/kill <id>` | Stop process |
+| `/history` | View checkpoints |
 | `/rollback <id>` | Restore checkpoint |
 | `/diff` | Show changes |
-| `/image <path>` | Attach image |
-| `/memory` | View project memory |
+| `/compact` | Compact context |
+| `/context` | Context usage |
 | `/mcp` | MCP servers |
+| `/memory` | Project memory |
 | `/export` | Export session |
-| `/help` | Full help |
+| `/import <file>` | Import file |
+| `/key` | API key |
+| `/clear` | Clear chat |
+| `/help` | Show help |
 
 ## Configuration
 

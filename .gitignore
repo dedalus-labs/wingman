@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments
+.env
+.env.*
+!.env.example
+
+# IDEs
+**/.idea/
+**/.vscode/
+**/.cursor/
+
+# Agents
+.agent/
+.claude/
+
+# MCP
+**/.mcp.json
+
+# App data (user-specific)
+**/.wingman/
+**/.agent/
+
+# OS
+.DS_Store
+
+# Ruff / uv
+.ruff_cache/
+.cache/

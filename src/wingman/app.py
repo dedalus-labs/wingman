@@ -80,6 +80,7 @@ class WingmanApp(App):
         Binding("ctrl+b", "background", "Background"),
         Binding("ctrl+z", "undo", "Undo"),
         Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+d", "exit_if_empty", "Quit", priority=True, show=False),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("f1", "help", "Help"),
         Binding("ctrl+/", "help", "Help", show=False),
@@ -1527,6 +1528,12 @@ Useful for: API patterns, file locations, conventions.
             )
         else:
             self._show_info("[#f7768e]Failed to restore checkpoint[/]")
+
+    def action_exit_if_empty(self) -> None:
+        """Exit the app on Ctrl+D when the active input has no text."""
+        focused = self.screen.focused
+        if isinstance(focused, Input) and not (focused.value or "").strip():
+            self.exit()
 
     def action_help(self) -> None:
         panel = self.active_panel

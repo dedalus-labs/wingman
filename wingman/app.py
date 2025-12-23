@@ -779,6 +779,9 @@ class WingmanApp(App):
                     sw.remove()
                 except Exception:
                     pass
+            # Remove the failed user message from history to prevent resending
+            if panel.messages and panel.messages[-1].get("role") == "user":
+                panel.messages.pop()
             self._show_info("[#f7768e]Request timed out[/]")
 
         except Exception as e:
@@ -794,6 +797,9 @@ class WingmanApp(App):
                 except Exception:
                     pass
             error_msg = str(e)
+            # Remove the failed user message from history to prevent resending
+            if panel.messages and panel.messages[-1].get("role") == "user":
+                panel.messages.pop()
             if "timeout" in error_msg.lower():
                 self._show_info("[#f7768e]Request timed out[/]")
             else:

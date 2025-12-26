@@ -120,6 +120,12 @@ def _notify_status(widget_id: str, status: str, output: str | None = None, panel
         _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, status, output, panel_id)
 
 
+def _update_thinking(status: str | None, panel_id: str | None = None) -> None:
+    """Update the Thinking spinner status (thread-safe)."""
+    if _app_instance is not None:
+        _app_instance.call_from_thread(_app_instance._update_thinking_status, status, panel_id)
+
+
 def get_segments(panel_id: str | None = None) -> list[dict]:
     """Get segments (text + tool calls) for a panel."""
     if not panel_id:
@@ -607,15 +613,24 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
 
     async def list_files(pattern: str = "**/*", path: str = ".") -> str:
         """List files matching a glob pattern."""
-        return await _list_files_impl(pattern, path, working_dir, panel_id)
+        try:
+            return await _list_files_impl(pattern, path, working_dir, panel_id)
+        except Exception as e:
+            return f"Error listing files: {e}"
 
     async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
         """Search for a regex pattern in files."""
-        return await _search_files_impl(pattern, path, file_pattern, working_dir, panel_id)
+        try:
+            return await _search_files_impl(pattern, path, file_pattern, working_dir, panel_id)
+        except Exception as e:
+            return f"Error searching files: {e}"
 
     async def run_command(command: str) -> str:
         """Run a shell command and return the output."""
-        return await _run_command_impl(command, working_dir, panel_id)
+        try:
+            return await _run_command_impl(command, working_dir, panel_id)
+        except Exception as e:
+            return f"Error running command: {e}"
 
     def bound_get_process_output(process_id: str, lines: int = 50) -> str:
         """Get recent output from a background process."""

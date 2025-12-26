@@ -17,6 +17,10 @@ from ..config import save_api_key
 class APIKeyScreen(ModalScreen[str | None]):
     """Screen for entering Dedalus API key on first launch."""
 
+    BINDINGS = [
+        Binding("ctrl+c", "quit", "Quit", priority=True),
+    ]
+
     CSS = """
     APIKeyScreen {
         align: center middle;
@@ -98,6 +102,9 @@ class APIKeyScreen(ModalScreen[str | None]):
         if key:
             self._validate_key(key)
 
+    def action_quit(self) -> None:
+        self.app.exit()
+
     @work(thread=False)
     async def _validate_key(self, key: str) -> None:
         status = self.query_one("#api-key-status", Static)
@@ -142,33 +149,55 @@ class SelectionModal(ModalScreen[str | None]):
     }
 
     SelectionModal > Vertical {
-        width: 60;
+        width: 50;
         height: auto;
         max-height: 70%;
-        background: $surface;
-        border: solid $primary;
+        background: #1a1b26;
+        border: solid #3d59a1;
         padding: 1 2;
     }
 
     SelectionModal ListView {
         height: auto;
-        max-height: 15;
+        max-height: 12;
         margin-top: 1;
+        background: #1a1b26;
+        scrollbar-background: #1a1b26;
+        scrollbar-color: #414868;
+        scrollbar-size: 1 1;
+    }
+
+    SelectionModal ListView:focus {
+        border: none;
     }
 
     SelectionModal ListItem {
         padding: 0 1;
+        background: #1a1b26;
+        color: #a9b1d6;
     }
 
     SelectionModal ListItem:hover {
-        background: $primary 30%;
+        background: #24283b;
+    }
+
+    SelectionModal ListView > ListItem.--highlight {
+        background: #24283b;
+        color: #7aa2f7;
     }
 
     SelectionModal .title {
         text-style: bold;
-        color: $text;
+        color: #7aa2f7;
         padding-bottom: 1;
-        border-bottom: solid $primary-background;
+        border-bottom: solid #24283b;
+    }
+
+    SelectionModal .hint {
+        color: #565f89;
+        text-align: center;
+        padding-top: 1;
+        height: 2;
     }
     """
 
@@ -183,6 +212,7 @@ class SelectionModal(ModalScreen[str | None]):
             yield ListView(
                 *[ListItem(Label(item), id=f"item-{i}") for i, item in enumerate(self.items)]
             )
+            yield Static("↑↓ navigate • Enter select • Esc cancel", classes="hint")
 
     @on(ListView.Selected)
     def on_select(self, event: ListView.Selected) -> None:

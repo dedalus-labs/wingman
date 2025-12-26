@@ -21,19 +21,51 @@ from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
 
 
 class MultilineInput(Input):
-    """Input that joins pasted multi-line text instead of truncating."""
+    """Input that joins pasted multi-line text, clears on escape, and collapses long pastes."""
+
+    LONG_PASTE_THRESHOLD = 200
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pasted_content: str | None = None
+        self._paste_placeholder: str | None = None
+
+    def _on_key(self, event) -> None:
+        if self._pasted_content is not None and event.key not in ("enter", "up", "down", "escape"):
+            # User is typing - clear the paste and let them type normally
+            self._pasted_content = None
+            self._paste_placeholder = None
+            self.value = ""
+        super()._on_key(event)
 
     def _on_paste(self, event: events.Paste) -> None:
         if event.text:
-            # Join all lines with spaces instead of taking only the first line
             cleaned = " ".join(event.text.split())
-            selection = self.selection
-            if selection.is_empty:
-                self.insert_text_at_cursor(cleaned)
+
+            if len(cleaned) > self.LONG_PASTE_THRESHOLD:
+                self._pasted_content = cleaned
+                self._paste_placeholder = f"[pasted {len(cleaned)} chars]"
+                self.value = self._paste_placeholder
+                self.cursor_position = len(self._paste_placeholder)
             else:
-                self.replace(cleaned, *selection)
+                self._pasted_content = None
+                self._paste_placeholder = None
+                selection = self.selection
+                if selection.is_empty:
+                    self.insert_text_at_cursor(cleaned)
+                else:
+                    self.replace(cleaned, *selection)
         event.stop()
         event.prevent_default()
+
+    def get_submit_value(self) -> str:
+        """Get the actual value to submit (expanded paste or regular value)."""
+        if self._pasted_content is not None:
+            content = self._pasted_content
+            self._pasted_content = None
+            self._paste_placeholder = None
+            return content
+        return self.value
 
 
 class ChatMessage(Static):
@@ -53,15 +85,16 @@ class ChatMessage(Static):
 
 
 class Thinking(Static):
-    """Loading indicator with status label."""
+    """Loading indicator with dynamic status label."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    LABELS = ["Mazing", "Soaring"]
+    IDLE_LABELS = ["Mazing", "Soaring", "Ascending Olympus", "Weaving fate", "Consulting the Oracle"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._frame = 0
-        self._label = random.choice(self.LABELS)
+        self._status: str | None = None
+        self._idle_label = random.choice(self.IDLE_LABELS)
 
     def on_mount(self) -> None:
         self.set_interval(0.08, self._tick)
@@ -70,8 +103,16 @@ class Thinking(Static):
         self._frame = (self._frame + 1) % len(self.FRAMES)
         self.refresh()
 
+    def set_status(self, status: str | None) -> None:
+        """Update the status label (e.g., 'Reading config.py')."""
+        self._status = status
+        self.refresh()
+
     def render(self) -> Text:
-        return Text.from_markup(f"[#e0af68]{self.FRAMES[self._frame]}[/] [dim #a9b1d6]{self._label}...[/]")
+        spinner = f"[#e0af68]{self.FRAMES[self._frame]}[/]"
+        if self._status:
+            return Text.from_markup(f"{spinner} [#a9b1d6]{self._status}[/]")
+        return Text.from_markup(f"{spinner} [dim #a9b1d6]{self._idle_label}...[/]")
 
 
 class StreamingText(Static):
@@ -333,6 +374,7 @@ class ChatPanel(Vertical):
         self.mcp_servers: list[str] = []
         self._is_active = False
         self._generating = False
+        self._cancel_requested = False
         self.working_dir: Path = Path.cwd()
 
     @property

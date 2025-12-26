@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/dedalus-labs/wingman/compare/v0.2.2...v0.3.0) (2025-12-26)
+
+
+### Features
+
+* pass tool outputs to context; remove max_steps limit; escape to cancel generation and clear input; collapse long pastes; update SelectionModal theme ([b8118aa](https://github.com/dedalus-labs/wingman/commit/b8118aaf63567fcac89b96a79b92257e8cbd671a))
+
 ## [0.2.2](https://github.com/dedalus-labs/wingman/compare/v0.2.1...v0.2.2) (2025-12-23)
 
 

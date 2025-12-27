@@ -1,5 +1,6 @@
 """Configuration and constants."""
 
+import contextlib
 import json
 from importlib.metadata import version
 from pathlib import Path
@@ -107,10 +108,8 @@ def save_api_key(api_key: str) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config = {}
     if CONFIG_FILE.exists():
-        try:
+        with contextlib.suppress(Exception):
             config = json.loads(CONFIG_FILE.read_text())
-        except Exception:
-            pass
     config["api_key"] = api_key
     CONFIG_FILE.write_text(json.dumps(config, indent=2))
 

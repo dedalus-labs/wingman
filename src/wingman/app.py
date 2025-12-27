@@ -1,18 +1,18 @@
 """Main Wingman application."""
 
 import asyncio
+import contextlib
 import re
 import time
 from pathlib import Path
 
+from dedalus_labs import AsyncDedalus, DedalusRunner
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static, Tree
-
-from dedalus_labs import AsyncDedalus, DedalusRunner
 
 from .checkpoints import get_checkpoint_manager, set_current_session
 from .config import (
@@ -28,13 +28,13 @@ from .config import (
 from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
-from .memory import clear_memory, load_memory, append_memory
-from .sessions import delete_session, get_session, load_sessions, rename_session, save_session, save_session_working_dir
+from .memory import append_memory, clear_memory, load_memory
+from .sessions import delete_session, load_sessions, rename_session, save_session, save_session_working_dir
 from .tools import (
     CODING_SYSTEM_PROMPT,
-    create_tools,
     add_text_segment,
     clear_segments,
+    create_tools,
     get_background_processes,
     get_pending_edit,
     get_segments,
@@ -338,11 +338,10 @@ class WingmanApp(App):
             with Vertical(id="sidebar") as sidebar:
                 sidebar.border_title = "Sessions"
                 yield Tree("Chats", id="sessions")
-            with Vertical(id="main"):
-                with Horizontal(id="panels-container"):
-                    panel = ChatPanel()
-                    self.panels.append(panel)
-                    yield panel
+            with Vertical(id="main"), Horizontal(id="panels-container"):
+                panel = ChatPanel()
+                self.panels.append(panel)
+                yield panel
         yield Static(id="status")
 
     def on_mount(self) -> None:
@@ -391,10 +390,7 @@ class WingmanApp(App):
         img_text = f" │ [#7dcfff]{img_count} image{'s' if img_count != 1 else ''}[/]" if img_count else ""
 
         # Context remaining indicator
-        if panel:
-            remaining = 1.0 - panel.context.usage_percent
-        else:
-            remaining = 1.0
+        remaining = 1.0 - panel.context.usage_percent if panel else 1.0
         if remaining <= (1.0 - AUTO_COMPACT_THRESHOLD):
             ctx_color = "#f7768e"
         elif remaining <= 0.4:
@@ -747,10 +743,9 @@ class WingmanApp(App):
                         delta = chunk.choices[0].delta
 
                         # Tool call detected - finalize current text segment
-                        if hasattr(delta, "tool_calls") and delta.tool_calls:
-                            if streaming_widget is not None:
-                                streaming_widget.mark_complete()
-                                streaming_widget = None
+                        if hasattr(delta, "tool_calls") and delta.tool_calls and streaming_widget is not None:
+                            streaming_widget.mark_complete()
+                            streaming_widget = None
 
                         # Stream text content
                         if hasattr(delta, "content") and delta.content:
@@ -769,10 +764,8 @@ class WingmanApp(App):
             if streaming_widget is not None:
                 streaming_widget.mark_complete()
 
-            try:
+            with contextlib.suppress(Exception):
                 thinking.remove()
-            except Exception:
-                pass
 
             segments = get_segments(panel.panel_id)
             if segments:
@@ -786,15 +779,11 @@ class WingmanApp(App):
             await self._check_auto_compact(panel)
 
         except asyncio.TimeoutError:
-            try:
+            with contextlib.suppress(Exception):
                 thinking.remove()
-            except Exception:
-                pass
             for sw in self.query(StreamingText):
-                try:
+                with contextlib.suppress(Exception):
                     sw.remove()
-                except Exception:
-                    pass
             # Remove the failed user message from history to prevent resending
             if panel.messages and panel.messages[-1].get("role") == "user":
                 panel.messages.pop()
@@ -802,16 +791,12 @@ class WingmanApp(App):
 
         except Exception as e:
             # Clean up thinking spinner
-            try:
+            with contextlib.suppress(Exception):
                 thinking.remove()
-            except Exception:
-                pass
             # Clean up any streaming widgets
             for sw in self.query(StreamingText):
-                try:
+                with contextlib.suppress(Exception):
                     sw.remove()
-                except Exception:
-                    pass
             error_msg = str(e)
             # Remove the failed user message from history to prevent resending
             if panel.messages and panel.messages[-1].get("role") == "user":
@@ -1093,7 +1078,7 @@ class WingmanApp(App):
             lines = ["[bold #7aa2f7]Checkpoints[/] (use /rollback <id> to restore)\n"]
             for cp in checkpoints:
                 ts = time.strftime("%H:%M:%S", time.localtime(cp.timestamp))
-                files = ", ".join(Path(f).name for f in cp.files.keys())
+                files = ", ".join(Path(f).name for f in cp.files)
                 lines.append(f"  [#9ece6a]{cp.id}[/] [{ts}] {cp.description}")
                 lines.append(f"    [dim]{files}[/]")
             self._show_info("\n".join(lines))

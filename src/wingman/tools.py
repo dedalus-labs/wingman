@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checkpoints import get_checkpoint_manager, get_current_session
+from .checkpoints import get_checkpoint_manager
 
 # App instance reference (set by app module, avoids circular import)
 _app_instance: Any = None
@@ -303,7 +303,7 @@ def _edit_file_impl(
             _track_tool_call(command, output, "error", panel_id)
             return output
         if content.count(old_string) > 1:
-            output = f"Error: old_string appears multiple times. Be more specific."
+            output = "Error: old_string appears multiple times. Be more specific."
             _notify_status(widget_id, "error", panel_id=panel_id)
             _track_tool_call(command, output, "error", panel_id)
             return output
@@ -361,9 +361,7 @@ def _list_files_sync(pattern: str, base: Path, working_dir: Path) -> list[str]:
     }
     results = []
     max_files = 5000
-    checked = 0
-    for p in base.glob(pattern):
-        checked += 1
+    for checked, p in enumerate(base.glob(pattern), 1):
         if checked > max_files:
             break
         if p.is_file() and not any(part in ignore for part in p.parts):
@@ -390,7 +388,7 @@ async def _list_files_impl(pattern: str, path: str, working_dir: Path, panel_id:
         output = "Timed out after 15s"
         await _update_command_status(widget_id, "error", output, panel_id)
         _track_tool_call(command, output, "error", panel_id)
-        return f"Listing timed out after 15s. Try a more specific pattern."
+        return "Listing timed out after 15s. Try a more specific pattern."
     except Exception as e:
         output = str(e)
         await _update_command_status(widget_id, "error", output, panel_id)
@@ -470,7 +468,7 @@ async def _search_files_impl(
         output = "Timed out after 30s"
         await _update_command_status(widget_id, "error", output, panel_id)
         _track_tool_call(command, output, "error", panel_id)
-        return f"Search timed out after 30s. Try a more specific path or pattern."
+        return "Search timed out after 30s. Try a more specific path or pattern."
     except re.error as e:
         output = f"Invalid regex: {e}"
         await _update_command_status(widget_id, "error", output, panel_id)

@@ -1,5 +1,6 @@
 """UI widgets for chat interface."""
 
+import contextlib
 import random
 import time
 from pathlib import Path
@@ -298,7 +299,7 @@ class CommandStatus(Static):
 
         # Add output preview if available
         if self._output and self._status in ("success", "error"):
-            lines = [l for l in self._output.strip().split("\n") if l.strip()]
+            lines = [line for line in self._output.strip().split("\n") if line.strip()]
             if lines:
                 preview_lines = []
                 for line in lines[: self.MAX_OUTPUT_LINES]:
@@ -373,10 +374,8 @@ class ChatPanel(Vertical):
         self._is_active = active
         self.set_class(active, "active-panel")
         if active:
-            try:
+            with contextlib.suppress(Exception):
                 self.query_one(f"#{self.panel_id}-prompt", Input).focus()
-            except Exception:
-                pass
 
     def get_chat_container(self) -> Vertical:
         return self.query_one(f"#{self.panel_id}-chat", Vertical)

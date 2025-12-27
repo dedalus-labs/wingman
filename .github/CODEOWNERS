@@ -1,0 +1,6 @@
+# Code Owners
+# These owners will be requested for review on PRs touching these paths.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# All files for now, will narrow as needed
+* @dedalus-labs/wingman

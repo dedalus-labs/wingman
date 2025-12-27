@@ -2,14 +2,13 @@
 
 import difflib
 
+from dedalus_labs import AsyncDedalus
 from rich.text import Text
 from textual import on, work
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
-
-from dedalus_labs import AsyncDedalus
 
 from ..config import save_api_key
 
@@ -327,7 +326,7 @@ class DiffModal(ModalScreen[bool]):
 
         with Vertical():
             with Vertical(classes="header"):
-                yield Static(Text.from_markup(f"[bold #7aa2f7]Pending Edit[/]"))
+                yield Static(Text.from_markup("[bold #7aa2f7]Pending Edit[/]"))
                 yield Static(Text.from_markup(f"[#565f89]{display_path}[/]"), classes="filepath")
             yield Static(Text.from_markup(diff_text), classes="diff-view")
             yield Static(

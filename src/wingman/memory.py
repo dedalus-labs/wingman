@@ -29,10 +29,7 @@ def save_memory(content: str) -> None:
 def append_memory(text: str) -> None:
     """Append to project memory."""
     current = load_memory()
-    if current:
-        new_content = current + "\n\n" + text
-    else:
-        new_content = text
+    new_content = current + "\n\n" + text if current else text
     save_memory(new_content)
 
 

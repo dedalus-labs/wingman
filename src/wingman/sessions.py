@@ -1,7 +1,6 @@
 """Session storage and persistence."""
 
 import json
-from pathlib import Path
 
 from .config import SESSIONS_DIR
 

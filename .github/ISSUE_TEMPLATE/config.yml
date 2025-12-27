@@ -1,0 +1,8 @@
+# Copyright (c) 2025 Dedalus Labs, Inc. and its contributors
+# SPDX-License-Identifier: MIT
+---
+blank_issues_enabled: false
+contact_links:
+  - name: Security Issue
+    url: https://github.com/dedalus-labs/wingman/security/advisories/new
+    about: Report security vulnerabilities privately

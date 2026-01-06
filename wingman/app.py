@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 
+from rich.markup import escape
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -117,22 +118,22 @@ class WingmanApp(App):
 
     Thinking {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     CommandStatus {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     StreamingText {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     .loaded-text {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     ToolApproval {
@@ -370,7 +371,7 @@ class WingmanApp(App):
         panel = self.active_panel
         mcp_count = len(panel.mcp_servers) if panel else 0
         mcp_text = f" │ MCP: {mcp_count}" if mcp_count else ""
-        session_text = panel.session_id if panel and panel.session_id else "New Chat"
+        session_text = escape(panel.session_id) if panel and panel.session_id else "New Chat"
 
         # Coding mode indicator
         code_text = " │ [#9ece6a]CODE[/]" if self.coding_mode else ""
@@ -408,7 +409,7 @@ class WingmanApp(App):
             cwd_display = f"~/{cwd.relative_to(Path.home())}"
         except ValueError:
             cwd_display = str(cwd)
-        cwd_text = f" │ [dim]{cwd_display}[/]"
+        cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
         status = f"{session_text} │ {model_short}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))

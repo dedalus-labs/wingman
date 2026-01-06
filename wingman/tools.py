@@ -335,15 +335,9 @@ def _edit_file_impl(path: str, old_string: str, new_string: str, working_dir: Pa
     try:
         content = file_path.read_text()
         if old_string not in content:
-            output = f"Error: old_string not found in {file_path}. Read the file first to see exact content."
-            _notify_status(widget_id, "error", panel_id=panel_id)
-            _track_tool_call(command, output, "error", panel_id)
-            return output
-        if content.count(old_string) > 1:
-            output = f"Error: old_string appears multiple times. Be more specific."
-            _notify_status(widget_id, "error", panel_id=panel_id)
-            _track_tool_call(command, output, "error", panel_id)
-            return output
+            _notify_status(widget_id, "error", "failed", panel_id)
+            _track_tool_call(command, "failed", "error", panel_id)
+            return "Edit failed - text not found. Re-read the file and try again."
 
         # Request user approval via diff modal
         if _app_instance is not None:
@@ -357,8 +351,8 @@ def _edit_file_impl(path: str, old_string: str, new_string: str, working_dir: Pa
             _edit_approval_event.wait()
 
             if not _edit_approval_result:
-                output = f"Edit rejected by user: {path}"
-                _notify_status(widget_id, "error", panel_id=panel_id)
+                output = "Edit rejected by user. STOP and ask what they want instead."
+                _notify_status(widget_id, "error", "rejected", panel_id)
                 _track_tool_call(command, output, "error", panel_id)
                 return output
 
@@ -766,8 +760,8 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
 CODING_SYSTEM_PROMPT = """You are Wingman, an expert AI coding assistant.
 
 ## Tools Available
-- read_file(path, offset?, limit?): Read file contents. Default: first 2000 lines. Use offset/limit for large files.
-- edit_file: Modify existing files (old_string must match EXACTLY including whitespace)
+- read_file(path, offset?, limit?): Read file contents with line numbers (e.g. "   1│ code"). Default: first 2000 lines.
+- edit_file(path, old_string, new_string): Replace old_string with new_string. CRITICAL: old_string must match the actual file content - do NOT include line numbers from read output. Only use content after the "│" character.
 - write_file: Create new files only
 - list_files: Find files with glob patterns
 - search_files(pattern, path?, file_pattern?, context?): Search file contents with regex. Use context=N to show N lines before/after each match.
@@ -782,6 +776,7 @@ CODING_SYSTEM_PROMPT = """You are Wingman, an expert AI coding assistant.
 3. Make minimal, focused edits
 4. If you're unsure, ask the user
 5. For long-running commands, the user may background them with Ctrl+B
+6. If user rejects an edit, STOP and ask what they want - do NOT retry or use shell commands to bypass
 
 ## Efficient File Reading
 For large files, search first then read targeted sections:

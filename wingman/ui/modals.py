@@ -360,7 +360,7 @@ class DiffModal(ModalScreen[bool]):
         with Vertical():
             with Vertical(classes="header"):
                 yield Static(Text.from_markup(f"[bold #7aa2f7]Pending Edit[/]"))
-                yield Static(Text.from_markup(f"[#565f89]{display_path}[/]"), classes="filepath")
+                yield Static(Text.from_markup(f"[#565f89]{escape(display_path)}[/]"), classes="filepath")
             yield Static(Text.from_markup(diff_text), classes="diff-view")
             yield Static(Text.from_markup("[#9ece6a]y[/]/[#7aa2f7]Enter[/] approve    [#f7768e]n[/]/[#7aa2f7]Esc[/] reject"), classes="hint")
 

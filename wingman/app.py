@@ -277,7 +277,6 @@ class WingmanApp(App):
     """
 
     BINDINGS = [
-        Binding("escape", "stop_generation", "Stop", show=False, priority=True),
         Binding("ctrl+n", "new_session", "New Chat"),
         Binding("ctrl+o", "open_session", "Open"),
         Binding("ctrl+s", "toggle_sidebar", "Sidebar"),
@@ -397,7 +396,7 @@ class WingmanApp(App):
         memory_text = " │ [#bb9af7]MEM[/]" if load_memory() else ""
 
         # Generating indicator
-        generating_text = " │ [bold #e0af68]GENERATING[/]" if panel and panel._generating else ""
+        generating_text = " │ [#e0af68]generating...[/]" if panel and panel._generating else ""
 
         # Panel indicator
         panel_count = len(self.panels)
@@ -542,7 +541,34 @@ class WingmanApp(App):
             chips[event.index + 1].focus()
 
     def on_key(self, event) -> None:
-        """Handle arrow navigation for image chips."""
+        """Handle escape and arrow navigation for image chips."""
+        # Handle escape only when no modal is open
+        if event.key == "escape" and len(self.screen_stack) == 1:
+            panel = self.active_panel
+            if panel and panel._generating:
+                panel._cancel_requested = True
+                for thinking in panel.query("Thinking"):
+                    try:
+                        thinking.remove()
+                    except Exception:
+                        pass
+                self._show_info("[#e0af68]Generation cancelled[/]")
+                event.stop()
+                event.prevent_default()
+                return
+            elif panel:
+                try:
+                    input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
+                    input_widget.value = ""
+                    if hasattr(input_widget, "_pasted_content"):
+                        input_widget._pasted_content = None
+                        input_widget._paste_placeholder = None
+                except Exception:
+                    pass
+                event.stop()
+                event.prevent_default()
+                return
+
         panel = self.active_panel
         if not panel:
             return

@@ -2,6 +2,7 @@
 
 import difflib
 
+from rich.markup import escape
 from rich.text import Text
 from textual import on, work
 from textual.binding import Binding
@@ -342,12 +343,13 @@ class DiffModal(ModalScreen[bool]):
         for line in diff_lines:
             if line.startswith("@@") or line.startswith("---") or line.startswith("+++"):
                 continue
+            escaped = escape(line.rstrip())
             if line.startswith("+"):
-                formatted.append(f"[#9ece6a]{line.rstrip()}[/]")
+                formatted.append(f"[#9ece6a]{escaped}[/]")
             elif line.startswith("-"):
-                formatted.append(f"[#f7768e]{line.rstrip()}[/]")
+                formatted.append(f"[#f7768e]{escaped}[/]")
             elif line.strip():
-                formatted.append(f"[#a9b1d6]{line.rstrip()}[/]")
+                formatted.append(f"[#a9b1d6]{escaped}[/]")
 
         diff_text = "\n".join(formatted) if formatted else "[dim]No visible changes[/]"
 

@@ -99,6 +99,23 @@ Wingman stores configuration in `~/.wingman/`:
 - Python 3.10+
 - A [Dedalus API key](https://dedaluslabs.ai/dashboard/api-keys)
 
+### Optional: Faster Search (Recommended)
+
+Install [fd](https://github.com/sharkdp/fd) and [ripgrep](https://github.com/BurntSushi/ripgrep) for significantly faster file operations:
+
+```bash
+# macOS
+brew install fd ripgrep
+
+# Ubuntu/Debian
+sudo apt install fd-find ripgrep
+
+# Arch
+sudo pacman -S fd ripgrep
+```
+
+Wingman automatically detects and uses these tools when available, falling back to `find`/`grep` otherwise.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.

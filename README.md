@@ -1,7 +1,7 @@
 # Wingman
 
 <div align="center">
-  <img src="assets/readme.png" alt="Flash STU Logo" width="720">
+  <img src="assets/readme.png" alt="Ralph 'Wingman' Wiggum flying with Dedalus wings" width="720">
 </div>
 
 <div align="center">

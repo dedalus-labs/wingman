@@ -1,14 +1,10 @@
-# =============================================================================
-# BUILD SYSTEM
-# =============================================================================
+# --- Build System ---
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
 
-# =============================================================================
-# PROJECT CONFIGURATION
-# =============================================================================
+# --- Project Configuration ---
 
 [project]
 name = "wingman-cli"
@@ -21,9 +17,7 @@ authors = [
     { name = "Aryan Mahajan", email = "aryan@dedalus.ai" },
     { name = "Dedalus Labs", email = "oss@dedaluslabs.ai" },
 ]
-maintainers = [
-    { name = "Aryan Mahajan", email = "aryan@dedalus.ai" },
-]
+maintainers = [{ name = "Aryan Mahajan", email = "aryan@dedalus.ai" }]
 keywords = [
     "ai",
     "coding",
@@ -61,9 +55,7 @@ dependencies = [
     "pillow>=10.0.0",
 ]
 
-# =============================================================================
-# PROJECT URLS
-# =============================================================================
+# --- Project URLs ---
 
 [project.urls]
 Homepage = "https://github.com/dedalus-labs/wingman"
@@ -71,33 +63,28 @@ Repository = "https://github.com/dedalus-labs/wingman"
 Issues = "https://github.com/dedalus-labs/wingman/issues"
 Documentation = "https://github.com/dedalus-labs/wingman#readme"
 
-# =============================================================================
-# PROJECT SCRIPTS (CLI ENTRY POINT)
-# =============================================================================
+# --- Project Scripts (CLI Entry Point) ---
 
 [project.scripts]
 wingman = "wingman.app:main"
 
-# =============================================================================
-# OPTIONAL DEPENDENCIES
-# =============================================================================
+# --- Optional Dependencies ---
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "ruff>=0.3.0",
+    "ruff>=0.14.0",
+    "ty>=0.0.5",
 ]
 
-# =============================================================================
-# TOOL CONFIGURATION
-# =============================================================================
-
-[tool.hatch.build.targets.wheel]
-packages = ["wingman"]
+# --- Tool Configuration ---
 
 [tool.uv]
 package = true
+
+[tool.uv.build-backend]
+module-name = "wingman"
 
 [tool.ruff]
 line-length = 120

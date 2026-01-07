@@ -1,6 +1,12 @@
 # Wingman
 
-AI-powered TUI coding assistant for the terminal. Your copilot for code.
+<div align="center">
+  <img src="assets/readme.png" alt="Flash STU Logo" width="720">
+</div>
+
+<div align="center">
+  <em>AI-powered TUI coding assistant for the terminal. Your copilot for code.</em>
+</div>
 
 ## Features
 

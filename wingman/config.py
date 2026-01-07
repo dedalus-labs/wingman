@@ -15,7 +15,7 @@ SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 # App metadata
 APP_NAME = "Wingman"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.3"
 APP_CREDIT = "Dedalus Labs"
 
 # API

@@ -792,3 +792,104 @@ When a command is backgrounded, you'll see "[Backgrounded: bg_X]". Use get_proce
 ## Working Directory
 {cwd}
 """
+
+
+# --- Headless mode implementations (no TUI, auto-approve) ---
+
+def _edit_file_impl_headless(path: str, old_string: str, new_string: str, working_dir: Path) -> str:
+    """Edit a file - headless mode (auto-approve, no checkpoints)."""
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = working_dir / file_path
+    file_path = file_path.resolve()
+
+    if not file_path.exists():
+        return f"Error: File not found: {file_path}"
+
+    try:
+        content = file_path.read_text()
+        if old_string not in content:
+            return "Edit failed - text not found. Re-read the file and try again."
+
+        new_content = content.replace(old_string, new_string, 1)
+        file_path.write_text(new_content)
+        return f"Edited: {path}"
+    except OSError as e:
+        return f"Error editing file: {e}"
+
+
+async def _run_command_impl_headless(command: str, working_dir: Path, timeout: int = 120) -> str:
+    """Run a shell command - headless mode (auto-approve)."""
+    try:
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=working_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        output_lines = []
+        start_time = time.time()
+
+        while True:
+            await asyncio.sleep(0.05)
+
+            if proc.poll() is not None:
+                remaining = proc.stdout.read() if proc.stdout else ""
+                if remaining:
+                    output_lines.append(remaining)
+                break
+
+            if proc.stdout:
+                ready, _, _ = select.select([proc.stdout], [], [], 0)
+                if ready:
+                    line = proc.stdout.readline()
+                    if line:
+                        output_lines.append(line)
+
+            if time.time() - start_time > timeout:
+                proc.terminate()
+                output = "".join(output_lines[-50:])
+                return f"Error: Command timed out after {timeout}s\n" + output
+
+        output = "".join(output_lines)
+        if len(output) > 10000:
+            output = output[:10000] + "\n... (truncated)"
+
+        return output or "(no output)"
+
+    except Exception as e:
+        return f"Error running command: {e}"
+
+
+def create_tools_headless(working_dir: Path) -> list:
+    """Create tools for headless mode with auto-approval."""
+
+    def read_file(path: str, offset: int | None = None, limit: int | None = None) -> str:
+        """Read file contents. Default: first 2000 lines."""
+        return _read_file_impl(path, working_dir, None, offset, limit)
+
+    def write_file(path: str, content: str) -> str:
+        """Create a new file with the given content."""
+        return _write_file_impl(path, content, working_dir, None)
+
+    def edit_file(path: str, old_string: str, new_string: str) -> str:
+        """Edit a file by replacing old_string with new_string."""
+        return _edit_file_impl_headless(path, old_string, new_string, working_dir)
+
+    async def list_files(pattern: str = "**/*", path: str = ".") -> str:
+        """List files matching a glob pattern."""
+        return await _list_files_impl(pattern, path, working_dir, None)
+
+    async def search_files(pattern: str, path: str = ".", file_pattern: str = "*", context: int = 0) -> str:
+        """Search for a regex pattern in files."""
+        return await _search_files_impl(pattern, path, file_pattern, working_dir, None, context)
+
+    async def run_command(command: str) -> str:
+        """Run a shell command and return the output."""
+        return await _run_command_impl_headless(command, working_dir)
+
+    return [read_file, write_file, edit_file, list_files, search_files, run_command]

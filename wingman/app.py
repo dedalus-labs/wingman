@@ -1487,6 +1487,58 @@ class WingmanApp(App):
 
 
 def main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="wingman",
+        description="Wingman - AI coding assistant for the terminal"
+    )
+    parser.add_argument(
+        "-p", "--print",
+        dest="prompt",
+        metavar="PROMPT",
+        help="Run in headless mode with the given prompt (non-interactive)"
+    )
+    parser.add_argument(
+        "-m", "--model",
+        help="Model to use (e.g., anthropic/claude-sonnet-4-20250514)"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print verbose output in headless mode"
+    )
+    parser.add_argument(
+        "--allowed-tools",
+        help="Comma-separated list of allowed tools (e.g., read_file,write_file,run_command)"
+    )
+    parser.add_argument(
+        "-C", "--working-dir",
+        help="Working directory for file operations"
+    )
+
+    args = parser.parse_args()
+
+    # Headless mode
+    if args.prompt:
+        import asyncio
+        from pathlib import Path
+        from .headless import run_headless
+
+        working_dir = Path(args.working_dir) if args.working_dir else None
+        allowed_tools = args.allowed_tools.split(",") if args.allowed_tools else None
+
+        exit_code = asyncio.run(run_headless(
+            prompt=args.prompt,
+            model=args.model,
+            working_dir=working_dir,
+            allowed_tools=allowed_tools,
+            verbose=args.verbose,
+        ))
+        sys.exit(exit_code)
+
+    # Interactive TUI mode
     app = WingmanApp()
     app.run()
 

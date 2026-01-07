@@ -409,6 +409,8 @@ class ChatPanel(Vertical):
         welcome = f"""{art}
 [dim]v{APP_VERSION} · {APP_CREDIT}[/]
 
+[#9ece6a]All models free until Jan 12![/]
+
 [#565f89]Type to chat · [bold #7aa2f7]/[/] for commands · [bold #7aa2f7]Ctrl+S[/] for sessions[/]"""
         chat.remove_children()
         chat.mount(Static(welcome, classes="panel-welcome"))

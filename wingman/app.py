@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 
+from rich.markup import escape
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -117,22 +118,22 @@ class WingmanApp(App):
 
     Thinking {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     CommandStatus {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     StreamingText {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     .loaded-text {
         height: auto;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
 
     ToolApproval {
@@ -370,7 +371,7 @@ class WingmanApp(App):
         panel = self.active_panel
         mcp_count = len(panel.mcp_servers) if panel else 0
         mcp_text = f" │ MCP: {mcp_count}" if mcp_count else ""
-        session_text = panel.session_id if panel and panel.session_id else "New Chat"
+        session_text = escape(panel.session_id) if panel and panel.session_id else "New Chat"
 
         # Coding mode indicator
         code_text = " │ [#9ece6a]CODE[/]" if self.coding_mode else ""
@@ -395,6 +396,9 @@ class WingmanApp(App):
         # Memory indicator
         memory_text = " │ [#bb9af7]MEM[/]" if load_memory() else ""
 
+        # Generating indicator
+        generating_text = " │ [#e0af68]generating...[/]" if panel and panel._generating else ""
+
         # Panel indicator
         panel_count = len(self.panels)
         panel_text = f" │ Panel {self.active_panel_idx + 1}/{panel_count}" if panel_count > 1 else ""
@@ -405,9 +409,9 @@ class WingmanApp(App):
             cwd_display = f"~/{cwd.relative_to(Path.home())}"
         except ValueError:
             cwd_display = str(cwd)
-        cwd_text = f" │ [dim]{cwd_display}[/]"
+        cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
-        status = f"{session_text} │ {model_short}{code_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
+        status = f"{session_text} │ {model_short}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 
     def _refresh_sessions(self) -> None:
@@ -538,10 +542,38 @@ class WingmanApp(App):
             chips[event.index + 1].focus()
 
     def on_key(self, event) -> None:
-        """Handle arrow navigation for image chips."""
+        """Handle escape and arrow navigation for image chips."""
+        # Handle escape only when no modal is open
+        if event.key == "escape" and len(self.screen_stack) == 1:
+            panel = self.active_panel
+            if panel and panel._generating:
+                panel._cancel_requested = True
+                for thinking in panel.query("Thinking"):
+                    try:
+                        thinking.remove()
+                    except Exception:
+                        pass
+                self._show_info("[#e0af68]Generation cancelled[/]")
+                event.stop()
+                event.prevent_default()
+                return
+            elif panel:
+                try:
+                    input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
+                    input_widget.value = ""
+                    if hasattr(input_widget, "_pasted_content"):
+                        input_widget._pasted_content = None
+                        input_widget._paste_placeholder = None
+                except Exception:
+                    pass
+                event.stop()
+                event.prevent_default()
+                return
+
         panel = self.active_panel
         if not panel:
             return
+
         focused = self.focused
 
         # Up from input -> last chip
@@ -624,7 +656,7 @@ class WingmanApp(App):
         if panel != self.active_panel:
             self._set_active_panel(self.panels.index(panel))
 
-        text = event.value.strip()
+        text = event.input.get_submit_value().strip() if hasattr(event.input, "get_submit_value") else event.value.strip()
 
         if not text and not panel.pending_images:
             return
@@ -682,9 +714,17 @@ class WingmanApp(App):
             messages = []
             for msg in panel.messages:
                 if msg.get("segments"):
-                    # Extract text content from segments
-                    text_parts = [s["content"] for s in msg["segments"] if s.get("type") == "text"]
-                    messages.append({"role": msg["role"], "content": "".join(text_parts)})
+                    # Include both text and tool outputs so model has full context
+                    content_parts = []
+                    for seg in msg["segments"]:
+                        if seg.get("type") == "text":
+                            content_parts.append(seg["content"])
+                        elif seg.get("type") == "tool":
+                            # Include tool results so model knows what it did
+                            cmd = seg.get("command", "")
+                            output = seg.get("output", "")
+                            content_parts.append(f"\n[Tool: {cmd}]\n{output}\n")
+                    messages.append({"role": msg["role"], "content": "".join(content_parts)})
                 else:
                     messages.append(msg.copy())
 
@@ -707,7 +747,6 @@ class WingmanApp(App):
             kwargs = {
                 "messages": messages,
                 "model": self.model,
-                "max_steps": 10,
                 "stream": True,
             }
             if panel.mcp_servers:
@@ -724,9 +763,15 @@ class WingmanApp(App):
             widget_id = int(time.time() * 1000)  # Unique base ID per message
 
             panel._generating = True
+            panel._cancel_requested = False
+            was_cancelled = False
+            self._update_status()
             try:
                 stream = self.runner.run(**kwargs)
                 async for chunk in stream:
+                    if panel._cancel_requested:
+                        was_cancelled = True
+                        break
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta
 
@@ -749,6 +794,7 @@ class WingmanApp(App):
             finally:
                 panel._generating = False
                 set_current_session(None)
+                self._update_status()
 
             if streaming_widget is not None:
                 streaming_widget.mark_complete()
@@ -762,8 +808,7 @@ class WingmanApp(App):
             if segments:
                 panel.messages.append({"role": "assistant", "segments": segments})
                 save_session(panel.session_id, panel.messages)
-            else:
-                # Stream ended with no content
+            elif not was_cancelled:
                 self._show_info("[#e0af68]Response ended with no content[/]")
 
             self._update_status()
@@ -803,7 +848,8 @@ class WingmanApp(App):
             if "timeout" in error_msg.lower():
                 self._show_info("[#f7768e]Request timed out[/]")
             else:
-                panel.add_message("assistant", f"[#f7768e]Error: {e}[/]")
+                # Don't use Rich markup - error may contain brackets
+                panel.add_message("assistant", f"Error: {error_msg}")
 
     def show_diff_approval(self) -> None:
         """Show diff modal for pending edit approval. Called from tool thread."""
@@ -842,6 +888,33 @@ class WingmanApp(App):
         result = widget.result
         widget.remove()
         return result
+
+    def action_quit(self) -> None:
+        """Quit the app."""
+        self.exit()
+
+    def action_stop_generation(self) -> None:
+        """Stop generation if active, otherwise clear input."""
+        panel = self.active_panel
+        if panel and panel._generating:
+            panel._cancel_requested = True
+            # Remove thinking spinner immediately
+            for thinking in panel.query("Thinking"):
+                try:
+                    thinking.remove()
+                except Exception:
+                    pass
+            self._show_info("[#e0af68]Generation cancelled[/]")
+        elif panel:
+            # Clear the input if not generating
+            try:
+                input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
+                input_widget.value = ""
+                if hasattr(input_widget, "_pasted_content"):
+                    input_widget._pasted_content = None
+                    input_widget._paste_placeholder = None
+            except Exception:
+                pass
 
     def action_background(self) -> None:
         """Request backgrounding of current command (Ctrl+B)."""
@@ -977,6 +1050,24 @@ class WingmanApp(App):
         try:
             widget = self.query_one(f"#{widget_id}", CommandStatus)
             widget.set_status(status, output)
+        except Exception:
+            pass
+
+    def _update_thinking_status(self, status: str | None, panel_id: str | None = None) -> None:
+        """Update the Thinking spinner with current tool status."""
+        panel = None
+        if panel_id:
+            for p in self.panels:
+                if p.panel_id == panel_id:
+                    panel = p
+                    break
+        if not panel:
+            panel = self.active_panel
+        if not panel:
+            return
+        try:
+            thinking = panel.get_chat_container().query_one(Thinking)
+            thinking.set_status(status)
         except Exception:
             pass
 
@@ -1396,6 +1487,58 @@ class WingmanApp(App):
 
 
 def main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="wingman",
+        description="Wingman - AI coding assistant for the terminal"
+    )
+    parser.add_argument(
+        "-p", "--print",
+        dest="prompt",
+        metavar="PROMPT",
+        help="Run in headless mode with the given prompt (non-interactive)"
+    )
+    parser.add_argument(
+        "-m", "--model",
+        help="Model to use (e.g., anthropic/claude-sonnet-4-20250514)"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print verbose output in headless mode"
+    )
+    parser.add_argument(
+        "--allowed-tools",
+        help="Comma-separated list of allowed tools (e.g., read_file,write_file,run_command)"
+    )
+    parser.add_argument(
+        "-C", "--working-dir",
+        help="Working directory for file operations"
+    )
+
+    args = parser.parse_args()
+
+    # Headless mode
+    if args.prompt:
+        import asyncio
+        from pathlib import Path
+        from .headless import run_headless
+
+        working_dir = Path(args.working_dir) if args.working_dir else None
+        allowed_tools = args.allowed_tools.split(",") if args.allowed_tools else None
+
+        exit_code = asyncio.run(run_headless(
+            prompt=args.prompt,
+            model=args.model,
+            working_dir=working_dir,
+            allowed_tools=allowed_tools,
+            verbose=args.verbose,
+        ))
+        sys.exit(exit_code)
+
+    # Interactive TUI mode
     app = WingmanApp()
     app.run()
 

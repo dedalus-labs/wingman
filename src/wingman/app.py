@@ -320,8 +320,7 @@ class WingmanApp(App):
         # Panel management
         self.panels: list[ChatPanel] = []
         self.active_panel_idx: int = 0
-        # For double-tap Ctrl+C to exit
-        self._last_ctrl_c_time: float | None = None
+        self.last_ctrl_c: float | None = None
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key."""
@@ -905,9 +904,11 @@ class WingmanApp(App):
             return ("yes", "")
         chat = panel.get_chat_container()
         widget = ToolApproval(tool_name, command, id=f"tool-approval-{panel_id or 'default'}")
-        # Mount before thinking spinner (search within this panel's chat only)
+        # Mount before thinking spinner and hide spinner while awaiting approval
+        thinking = None
         try:
             thinking = chat.query_one(Thinking)
+            thinking.display = False
             chat.mount(widget, before=thinking)
         except Exception:
             chat.mount(widget)
@@ -916,6 +917,9 @@ class WingmanApp(App):
             await asyncio.sleep(0.05)
         result = widget.result
         widget.remove()
+        # Restore thinking spinner
+        if thinking:
+            thinking.display = True
         return result
 
     def action_quit(self) -> None:
@@ -929,17 +933,17 @@ class WingmanApp(App):
                     input_widget.value = ""
                     if hasattr(input_widget, "_pasted_content"):
                         input_widget._pasted_content = None
-                    self._last_ctrl_c_time = None
+                    self.last_ctrl_c = None
                     return
             except Exception:
                 pass
 
         # Double-tap detection (within 1 second)
         now = time.time()
-        if self._last_ctrl_c_time and (now - self._last_ctrl_c_time) < 1.0:
+        if self.last_ctrl_c and (now - self.last_ctrl_c) < 1.0:
             self.exit()
         else:
-            self._last_ctrl_c_time = now
+            self.last_ctrl_c = now
             self.notify("Press Ctrl+C again to quit", severity="warning", timeout=1.5)
 
     def action_stop_generation(self) -> None:

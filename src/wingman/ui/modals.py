@@ -1,6 +1,7 @@
 """Modal dialogs and screens."""
 
 import difflib
+import time
 
 from dedalus_labs import AsyncDedalus
 from rich.markup import escape
@@ -20,67 +21,6 @@ class APIKeyScreen(ModalScreen[str | None]):
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", priority=True),
     ]
-
-    CSS = """
-    APIKeyScreen {
-        align: center middle;
-        background: #1a1b26;
-    }
-
-    APIKeyScreen > Vertical {
-        width: 70;
-        height: auto;
-        padding: 2 4;
-    }
-
-    APIKeyScreen .header {
-        text-align: center;
-        color: #7aa2f7;
-        text-style: bold;
-        padding-bottom: 2;
-    }
-
-    APIKeyScreen .instruction {
-        text-align: center;
-        color: #a9b1d6;
-        padding-bottom: 1;
-    }
-
-    APIKeyScreen .link {
-        text-align: center;
-        color: #7aa2f7;
-        text-style: underline;
-        padding-bottom: 2;
-    }
-
-    APIKeyScreen .prompt {
-        text-align: center;
-        color: #a9b1d6;
-        padding-bottom: 1;
-    }
-
-    APIKeyScreen Input {
-        margin: 1 0;
-    }
-
-    APIKeyScreen .footer {
-        text-align: center;
-        color: #565f89;
-        padding-top: 2;
-    }
-
-    APIKeyScreen .error {
-        text-align: center;
-        color: #f7768e;
-        padding-top: 1;
-    }
-
-    APIKeyScreen .validating {
-        text-align: center;
-        color: #7aa2f7;
-        padding-top: 1;
-    }
-    """
 
     def compose(self):
         with Vertical():
@@ -143,64 +83,6 @@ class SelectionModal(ModalScreen[str | None]):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    CSS = """
-    SelectionModal {
-        align: center middle;
-    }
-
-    SelectionModal > Vertical {
-        width: 50;
-        height: auto;
-        max-height: 70%;
-        background: #1a1b26;
-        border: solid #3d59a1;
-        padding: 1 2;
-    }
-
-    SelectionModal ListView {
-        height: auto;
-        max-height: 12;
-        margin-top: 1;
-        background: #1a1b26;
-        scrollbar-background: #1a1b26;
-        scrollbar-color: #414868;
-        scrollbar-size: 1 1;
-    }
-
-    SelectionModal ListView:focus {
-        border: none;
-    }
-
-    SelectionModal ListItem {
-        padding: 0 1;
-        background: #1a1b26;
-        color: #a9b1d6;
-    }
-
-    SelectionModal ListItem:hover {
-        background: #24283b;
-    }
-
-    SelectionModal ListView > ListItem.--highlight {
-        background: #24283b;
-        color: #7aa2f7;
-    }
-
-    SelectionModal .title {
-        text-style: bold;
-        color: #7aa2f7;
-        padding-bottom: 1;
-        border-bottom: solid #24283b;
-    }
-
-    SelectionModal .hint {
-        color: #565f89;
-        text-align: center;
-        padding-top: 1;
-        height: 2;
-    }
-    """
-
     def __init__(self, title: str, items: list[str], **kwargs):
         super().__init__(**kwargs)
         self.title_text = title
@@ -227,35 +109,79 @@ class SelectionModal(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
+    """Modal for browsing and managing project memory."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("d", "delete", "Delete"),
+        Binding("a", "add", "Add"),
+    ]
+
+    def __init__(self, entries: list, **kwargs):
+        super().__init__(**kwargs)
+        self.entries = entries  # list[MemoryEntry]
+        self._highlighted_idx: int = 0
+
+    def compose(self):
+        with Vertical():
+            yield Label("Project Memory", classes="title")
+            if self.entries:
+                items = []
+                for i, e in enumerate(self.entries):
+                    ts = time.strftime("%m/%d %H:%M", time.localtime(e.created_at))
+                    preview = e.content[:60].replace("\n", " ")
+                    if len(e.content) > 60:
+                        preview += "..."
+                    items.append(ListItem(Label(f"[dim]{e.id}[/] [{ts}] {preview}"), id=f"mem-{i}"))
+                yield ListView(*items)
+                yield Static("", id="preview-text", classes="preview")
+                yield Static("↑↓ navigate • d delete • a add • Esc close", classes="hint")
+            else:
+                yield Static("No memories saved.\nUse 'a' to add or /memory add <text>", classes="empty")
+                yield Static("a add • Esc close", classes="hint")
+
+    def on_mount(self) -> None:
+        if self.entries:
+            self._update_preview(0)
+
+    @on(ListView.Highlighted)
+    def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item:
+            event.item.scroll_visible()
+            idx = int(event.item.id.split("-")[1])
+            self._highlighted_idx = idx
+            self._update_preview(idx)
+
+    def _update_preview(self, idx: int) -> None:
+        try:
+            preview = self.query_one("#preview-text", Static)
+            if 0 <= idx < len(self.entries):
+                content = self.entries[idx].content
+                # Show first few lines
+                lines = content.split("\n")[:3]
+                preview.update("\n".join(lines) + ("..." if len(content.split("\n")) > 3 else ""))
+        except Exception:
+            pass
+
+    def action_delete(self) -> None:
+        if self.entries and 0 <= self._highlighted_idx < len(self.entries):
+            entry_id = self.entries[self._highlighted_idx].id
+            self.dismiss(("delete", entry_id))
+
+    def action_add(self) -> None:
+        self.dismiss(("add", None))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class InputModal(ModalScreen[str | None]):
     """Modal for text input."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
     ]
-
-    CSS = """
-    InputModal {
-        align: center middle;
-    }
-
-    InputModal > Vertical {
-        width: 60;
-        height: auto;
-        background: $surface;
-        border: solid $primary;
-        padding: 1 2;
-    }
-
-    InputModal .title {
-        text-style: bold;
-        padding-bottom: 1;
-    }
-
-    InputModal Input {
-        margin-top: 1;
-    }
-    """
 
     def __init__(self, title: str, placeholder: str = "", **kwargs):
         super().__init__(**kwargs)
@@ -287,47 +213,6 @@ class DiffModal(ModalScreen[bool]):
         Binding("n", "reject", "Reject"),
         Binding("escape", "reject", "Reject"),
     ]
-
-    CSS = """
-    DiffModal {
-        align: center middle;
-    }
-
-    DiffModal > Vertical {
-        width: 90%;
-        max-width: 100;
-        height: auto;
-        max-height: 80%;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        padding: 1 2;
-    }
-
-    DiffModal .header {
-        height: auto;
-        padding-bottom: 1;
-    }
-
-    DiffModal .filepath {
-        color: #565f89;
-    }
-
-    DiffModal .diff-view {
-        height: auto;
-        max-height: 20;
-        overflow-y: auto;
-        background: #16161e;
-        padding: 1;
-        border: solid #24283b;
-    }
-
-    DiffModal .hint {
-        height: auto;
-        color: #565f89;
-        text-align: center;
-        padding-top: 1;
-    }
-    """
 
     def __init__(self, path: str, old_string: str, new_string: str, **kwargs):
         super().__init__(**kwargs)

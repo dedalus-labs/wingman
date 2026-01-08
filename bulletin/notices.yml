@@ -1,0 +1,20 @@
+# Wingman Notices
+# Important announcements, deprecation warnings, maintenance alerts
+#
+# Rich markup: https://rich.readthedocs.io/en/stable/markup.html
+# Schema: schema.json
+
+version: 1
+
+messages: []
+# Example:
+#   - id: "maintenance-2025-01"
+#     type: notice
+#     content: |
+#       [bold #f7768e]Scheduled Maintenance[/]
+#       API will be unavailable Jan 15, 2-4am UTC.
+#     conditions:
+#       from: "2025-01-14T00:00:00Z"
+#       until: "2025-01-15T04:00:00Z"
+#     priority: 999
+#     dismissible: false

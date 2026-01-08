@@ -101,6 +101,21 @@ uv run pytest                        # Test
 
 All must pass. See the [style guide](docs/style/README.md).
 
+## Dev Mode
+
+Set `WINGMAN_DEV=1` to enable development features:
+
+```bash
+export WINGMAN_DEV=1
+uv run wingman
+```
+
+This enables:
+- **Local bulletin loading**: Reads messages from `./bulletin/` instead of fetching from GitHub
+- Useful for testing new banners, tips, or notices before committing
+
+You can also set `WINGMAN_BULLETIN_PATH=/path/to/bulletin` to point to a specific directory.
+
 ## AI Disclosure
 
 If you use AI tools (Copilot, Claude, Cursor), mention it in your PR. You must understand code you submit.

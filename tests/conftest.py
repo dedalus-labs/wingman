@@ -2,6 +2,9 @@
 
 import pytest
 
+# Enable async tests without marking each one
+pytest_plugins = ["pytest_asyncio"]
+
 
 @pytest.fixture
 def banner_yaml():

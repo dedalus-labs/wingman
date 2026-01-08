@@ -1,6 +1,6 @@
 # Guidelines For Coding Agents
 
-Instructions for AI coding agents (Claude, Codex, Cursor, Devin, etc.) working on this codebase.
+Instructions for AI coding agents working in the Wingman codebase.
 
 ## Essential Commands
 
@@ -67,6 +67,7 @@ uv run ruff format src/wingman/
 - Commit API keys or credentials
 - Break the TUI layout without testing
 - Use `panic()`-style exceptions for recoverable errors
+- Use emojis, at all
 
 ## Do
 

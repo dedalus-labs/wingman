@@ -14,6 +14,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Input, Static
 
+from ..bulletin import get_bulletin_manager
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import CachedImage, create_image_message_from_cache
@@ -395,7 +396,7 @@ class ChatPanel(Vertical):
         with Vertical(classes="panel-input"):
             yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
             yield MultilineInput(
-                placeholder="Message... (/ for commands)", id=f"{self.panel_id}-prompt", classes="panel-prompt"
+                placeholder="Type... (/ for commands)", id=f"{self.panel_id}-prompt", classes="panel-prompt"
             )
             yield Static("", id=f"{self.panel_id}-hint", classes="panel-hint")
 
@@ -406,14 +407,38 @@ class ChatPanel(Vertical):
         chat = self.query_one(f"#{self.panel_id}-chat", Vertical)
         use_big = self.size.width >= 70 and not force_compact
         art = WELCOME_ART if use_big else WELCOME_ART_COMPACT
+
+        # Get banner and tip from bulletin system
+        manager = get_bulletin_manager()
+        manager.load_sync("banners")
+        manager.load_sync("tips")
+        banners = manager.get_active("banners")
+        tips = manager.get_active("tips")
+
+        banner_line = banners[0].content if banners else ""
+        tip_line = random.choice(tips).content if tips else ""
+        tip_text = f"\nTip: {tip_line}" if tip_line else ""
         welcome = f"""{art}
-[dim]v{APP_VERSION} · {APP_CREDIT}[/]
+[dim]{APP_CREDIT}[/]
+[dim]v{APP_VERSION}[/]
 
-[#9ece6a]All models free until Jan 12![/]
+{banner_line}
 
-[#565f89]Type to chat · [bold #7aa2f7]/[/] for commands · [bold #7aa2f7]Ctrl+S[/] for sessions[/]"""
+[#565f89][bold]/[/] for commands · [bold]Ctrl+S[/] for sessions{tip_text}[/]"""
         chat.remove_children()
         chat.mount(Static(welcome, classes="panel-welcome"))
+
+    def on_click(self, event: events.Click) -> None:
+        """Click to focus this panel."""
+        if not self._is_active:
+            self.post_message(self.Clicked(self))
+
+    class Clicked(Message):
+        """Posted when panel is clicked."""
+
+        def __init__(self, panel: "ChatPanel") -> None:
+            super().__init__()
+            self.panel = panel
 
     def set_active(self, active: bool) -> None:
         self._is_active = active
@@ -463,8 +488,12 @@ class ChatPanel(Vertical):
         self.get_scroll_container().scroll_end(animate=False)
 
     def show_info(self, text: str) -> None:
+        """Show ephemeral info (replaces previous info, not sent to model)."""
         chat = self.get_chat_container()
-        chat.mount(Static(f"[dim]{text}[/]"))
+        # Remove previous info widgets (they have no id, just class check)
+        for widget in chat.query(".info-text"):
+            widget.remove()
+        chat.mount(Static(f"[dim]{text}[/]", classes="info-text"))
         self.get_scroll_container().scroll_end(animate=False)
 
     def clear_chat(self) -> None:

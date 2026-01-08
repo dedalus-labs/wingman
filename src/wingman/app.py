@@ -3,6 +3,7 @@
 import asyncio
 import re
 import time
+import webbrowser
 from pathlib import Path
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
@@ -28,7 +29,7 @@ from .config import (
 from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
-from .memory import append_memory, clear_memory, load_memory
+from .memory import add_entry, clear_all, load_memory
 from .sessions import delete_session, load_sessions, rename_session, save_session, save_session_working_dir
 from .tools import (
     CODING_SYSTEM_PROMPT,
@@ -63,229 +64,7 @@ class WingmanApp(App):
     TITLE = "Wingman"
     SUB_TITLE = "Your copilot for the terminal"
 
-    CSS = """
-    Screen {
-        background: #1a1b26;
-    }
-
-    /* Sidebar */
-    #sidebar {
-        width: 26;
-        height: 100%;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        border-title-color: #a9b1d6;
-        border-title-style: bold;
-    }
-
-    #sidebar Tree {
-        padding: 1;
-        background: transparent;
-    }
-
-    /* Main area */
-    #main {
-        height: 100%;
-    }
-
-    /* Chat panel */
-    #chat-panel {
-        height: 1fr;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        border-title-color: #a9b1d6;
-        border-title-style: bold;
-    }
-
-    #chat {
-        padding: 1 2;
-        height: auto;
-    }
-
-    /* Welcome message - centered */
-    #welcome {
-        width: 100%;
-        height: auto;
-        content-align: center middle;
-        text-align: center;
-        padding: 4 2;
-    }
-
-    /* Hide scrollbar by default */
-    #chat-panel {
-        scrollbar-size: 0 0;
-    }
-
-    #chat-panel:focus-within {
-        scrollbar-size: 1 1;
-    }
-
-    /* Clean message styling - no blocks */
-    ChatMessage {
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    Thinking {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-
-    CommandStatus {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-
-    StreamingText {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-
-    .loaded-text {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-
-    ToolApproval {
-        height: auto;
-        margin: 0 0 1 0;
-        padding: 1 2;
-        background: #1a1b26;
-        border-left: solid #e0af68;
-    }
-
-    ToolApproval:focus {
-        border-left: solid #7aa2f7;
-    }
-
-    ToolApproval #approval-input-row {
-        height: auto;
-        margin-top: 1;
-    }
-
-    ToolApproval #approval-prompt {
-        width: auto;
-        height: 1;
-        padding: 0;
-    }
-
-    ToolApproval #approval-feedback {
-        margin: 0;
-        padding: 0;
-        background: transparent;
-        border: none;
-        height: 1;
-    }
-
-    ToolApproval #approval-feedback:focus {
-        border: none;
-    }
-
-    .hidden {
-        display: none;
-    }
-
-    /* Input area */
-    #input-panel {
-        height: auto;
-        min-height: 4;
-        max-height: 10;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        border-title-color: #a9b1d6;
-        border-title-style: bold;
-        padding: 1;
-    }
-
-    #prompt {
-        background: #24283b;
-        border: none;
-    }
-
-    #cmd-hint {
-        height: auto;
-        color: #565f89;
-        padding: 0 1;
-    }
-
-    /* Status bar */
-    #status {
-        height: 1;
-        dock: bottom;
-        background: #16161e;
-        color: #565f89;
-        padding: 0 2;
-    }
-
-    /* Split panels container */
-    #panels-container {
-        height: 1fr;
-    }
-
-    /* Individual chat panel */
-    ChatPanel {
-        width: 1fr;
-        height: 100%;
-        border: solid #3b3d4d;
-        background: #1a1b26;
-    }
-
-    ChatPanel.active-panel {
-        border: solid #7aa2f7;
-    }
-
-    .panel-scroll {
-        height: 1fr;
-        scrollbar-size: 0 0;
-    }
-
-    .panel-scroll:focus-within {
-        scrollbar-size: 1 1;
-    }
-
-    .panel-chat {
-        padding: 1 2;
-        height: auto;
-    }
-
-    .panel-welcome {
-        width: 100%;
-        height: auto;
-        content-align: center middle;
-        text-align: center;
-        padding: 2 1;
-    }
-
-    .panel-input {
-        height: auto;
-        min-height: 3;
-        max-height: 8;
-        padding: 0 1 1 1;
-    }
-
-    .panel-prompt {
-        background: #24283b;
-        border: none;
-    }
-
-    .panel-hint {
-        height: auto;
-        color: #565f89;
-        padding: 0 1;
-    }
-
-    .panel-chips {
-        height: auto;
-        width: 100%;
-    }
-
-    ImageChip {
-        height: 1;
-        width: auto;
-        margin: 0 1 0 0;
-    }
-
-    """
+    CSS_PATH = "ui/app.tcss"
 
     BINDINGS = [
         Binding("ctrl+n", "new_session", "New Chat"),
@@ -299,11 +78,7 @@ class WingmanApp(App):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("f1", "help", "Help"),
-        # Split panel controls
-        Binding("ctrl+\\", "split_panel", "Split"),
-        Binding("ctrl+w", "close_panel", "Close Panel"),
-        Binding("ctrl+left", "prev_panel", "Prev Panel", show=False),
-        Binding("ctrl+right", "next_panel", "Next Panel", show=False),
+        Binding("ctrl+/", "help", "Help", show=False),
         Binding("ctrl+1", "goto_panel_1", "Panel 1", show=False),
         Binding("ctrl+2", "goto_panel_2", "Panel 2", show=False),
         Binding("ctrl+3", "goto_panel_3", "Panel 3", show=False),
@@ -313,6 +88,7 @@ class WingmanApp(App):
     def __init__(self):
         super().__init__()
         set_app_instance(self)
+        self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None
         self.runner: DedalusRunner | None = None
         self.model = MODELS[0]
@@ -405,7 +181,7 @@ class WingmanApp(App):
         ctx_text = f" │ [bold {ctx_color}]Context: {int(remaining * 100)}%[/]"
 
         # Memory indicator
-        memory_text = " │ [#bb9af7]MEM[/]" if load_memory() else ""
+        memory_text = " │ [#bb9af7]MEM[/]" if load_memory().entries else ""
 
         # Generating indicator
         generating_text = " │ [#e0af68]Generating...[/]" if panel and panel._generating else ""
@@ -446,6 +222,12 @@ class WingmanApp(App):
         """Show info in the active panel."""
         if self.active_panel:
             self.active_panel.show_info(text)
+
+    def _open_github_issue(self, template: str) -> None:
+        """Open GitHub issue page with template."""
+        url = f"https://github.com/dedalus-labs/wingman/issues/new?template={template}"
+        webbrowser.open(url)
+        self.notify(f"Opening {template.replace('.yml', '').replace('_', ' ')}...", timeout=2.0)
 
     def _show_context_info(self) -> None:
         """Display detailed context usage information."""
@@ -767,8 +549,9 @@ class WingmanApp(App):
                 system_content = CODING_SYSTEM_PROMPT.format(cwd=panel.working_dir)
                 # Include project memory if available
                 memory = load_memory()
-                if memory:
-                    system_content += f"\n\n## Project Memory\n{memory}"
+                if memory.entries:
+                    memory_text = "\n".join(e.content for e in memory.entries)
+                    system_content += f"\n\n## Project Memory\n{memory_text}"
                 system_msg = {"role": "system", "content": system_content}
                 messages = [system_msg] + messages
 
@@ -944,7 +727,10 @@ class WingmanApp(App):
             self.exit()
         else:
             self.last_ctrl_c = now
-            self.notify("Press Ctrl+C again to quit", severity="warning", timeout=1.5)
+            if len(self.panels) > 1:
+                self.notify("/close to close panel, Ctrl+C to quit", severity="warning", timeout=2.0)
+            else:
+                self.notify("Press Ctrl+C again to quit", severity="warning", timeout=1.5)
 
     def action_stop_generation(self) -> None:
         """Stop generation if active, otherwise clear input."""
@@ -992,7 +778,7 @@ class WingmanApp(App):
         self._update_status()
 
     def action_split_panel(self) -> None:
-        """Create a new panel (Ctrl+\\)."""
+        """Create a new panel (/split)."""
         if len(self.panels) >= 4:
             self._show_info("Maximum 4 panels allowed")
             return
@@ -1025,10 +811,22 @@ class WingmanApp(App):
         """Handle terminal resize - refresh welcome art."""
         self.call_after_refresh(self._refresh_welcome_art)
 
+    def on_chat_panel_clicked(self, event: ChatPanel.Clicked) -> None:
+        """Switch focus to clicked panel."""
+        try:
+            idx = self.panels.index(event.panel)
+            if idx != self.active_panel_idx:
+                self.panels[self.active_panel_idx].set_active(False)
+                self.active_panel_idx = idx
+                event.panel.set_active(True)
+                self._update_status()
+        except ValueError:
+            pass
+
     def action_close_panel(self) -> None:
-        """Close the active panel (Ctrl+W)."""
+        """Close the active panel (/close)."""
         if len(self.panels) <= 1:
-            self._show_info("Cannot close the last panel")
+            self._show_info("Cannot close the last panel. Use Ctrl+C to quit.")
             return
         panel = self.active_panel
         if not panel:
@@ -1047,14 +845,14 @@ class WingmanApp(App):
         self._update_status()
 
     def action_prev_panel(self) -> None:
-        """Switch to previous panel (Ctrl+Left)."""
+        """Switch to previous panel."""
         if len(self.panels) <= 1:
             return
         new_idx = (self.active_panel_idx - 1) % len(self.panels)
         self._set_active_panel(new_idx)
 
     def action_next_panel(self) -> None:
-        """Switch to next panel (Ctrl+Right)."""
+        """Switch to next panel."""
         if len(self.panels) <= 1:
             return
         new_idx = (self.active_panel_idx + 1) % len(self.panels)
@@ -1275,24 +1073,85 @@ class WingmanApp(App):
             self._show_info("\n".join(lines))
 
     def _cmd_memory(self, arg: str) -> None:
-        if not arg:
+        from .memory import delete_entries
+        from .ui.modals import MemoryModal
+
+        if not arg or arg == "list":
+            # Open memory browser modal
             memory = load_memory()
-            if memory:
-                self._show_info(f"[bold #7aa2f7]Project Memory[/]\n\n{memory}")
-            else:
-                self._show_info("[dim]No project memory set. Use /memory add <text> to add notes.[/]")
+            self.push_screen(MemoryModal(memory.entries), self._on_memory_action)
         elif arg == "clear":
-            clear_memory()
-            self._show_info("[#9ece6a]Project memory cleared[/]")
+            clear_all()
+            self._show_info("[#9ece6a]All memories cleared[/]")
         elif arg.startswith("add "):
             text = arg[4:].strip()
             if text:
-                append_memory(text)
-                self._show_info(f"[#9ece6a]Added to memory:[/] {text[:50]}...")
+                entry = add_entry(text)
+                self._show_info(f"[#9ece6a]Added memory {entry.id}:[/] {text[:50]}{'...' if len(text) > 50 else ''}")
             else:
                 self._show_info("Usage: /memory add <text>")
+        elif arg.startswith("delete "):
+            ids = arg[7:].split()
+            if ids:
+                n = delete_entries(ids)
+                self._show_info(f"[#9ece6a]Deleted {n} memories[/]")
+            else:
+                self._show_info("Usage: /memory delete <id>")
+        elif arg == "help":
+            self._show_memory_help()
         else:
-            self._show_info("Usage: /memory, /memory add <text>, /memory clear")
+            self._show_memory_help()
+
+    def _show_memory_help(self) -> None:
+        help_text = """[bold #7aa2f7]Memory Commands[/]
+
+[#7aa2f7]/memory[/]             Open memory browser
+[#7aa2f7]/memory add[/] <text>  Add a note
+[#7aa2f7]/memory clear[/]       Clear all memories
+
+[bold #a9b1d6]In Browser[/]
+  ↑↓   Navigate
+  d    Delete highlighted
+  a    Add new memory
+  Esc  Close
+
+[bold #a9b1d6]What is Memory?[/]
+Project-specific notes injected into the AI context.
+Useful for: API patterns, file locations, conventions.
+
+[dim]Stored in ~/.wingman/memory/ per working directory.[/]"""
+        self._show_info(help_text)
+
+    def _on_memory_action(self, result: tuple[str, str | None] | None) -> None:
+        if not result:
+            return
+        action, entry_id = result
+        if action == "delete" and entry_id:
+            from .memory import delete_entries
+
+            n = delete_entries([entry_id])
+            if n:
+                self.notify(f"Deleted memory {entry_id}", timeout=2.0)
+                # Reopen modal with updated list
+                memory = load_memory()
+                if memory.entries:
+                    from .ui.modals import MemoryModal
+
+                    self.push_screen(MemoryModal(memory.entries), self._on_memory_action)
+        elif action == "add":
+            from .ui.modals import InputModal
+
+            self.push_screen(InputModal("Add Memory", "Enter note:"), self._on_memory_add)
+
+    def _on_memory_add(self, text: str | None) -> None:
+        if text and text.strip():
+            entry = add_entry(text.strip())
+            self.notify(f"Added memory {entry.id}", timeout=2.0)
+            # Reopen modal
+            memory = load_memory()
+            from .ui.modals import MemoryModal
+
+            self.push_screen(MemoryModal(memory.entries), self._on_memory_action)
 
     def _cmd_export(self, arg: str) -> None:
         panel = self.active_panel
@@ -1364,6 +1223,8 @@ class WingmanApp(App):
                 if arg
                 else "Usage: /kill <process_id>"
             ),
+            "bug": lambda: self._open_github_issue("bug_report.yml"),
+            "feature": lambda: self._open_github_issue("feature_request.yml"),
         }
 
         # Commands with complex logic
@@ -1512,9 +1373,6 @@ class WingmanApp(App):
 [bold #a9b1d6]Panels[/]
   [#7aa2f7]/split[/]          Split into new panel
   [#7aa2f7]/close[/]          Close current panel
-  [#7aa2f7]Ctrl+\\[/]         Split panel
-  [#7aa2f7]Ctrl+W[/]          Close panel
-  [#7aa2f7]Ctrl+←/→[/]        Switch panels
   [#7aa2f7]Ctrl+1-4[/]        Jump to panel
 
 [bold #a9b1d6]Coding[/]
@@ -1527,12 +1385,12 @@ class WingmanApp(App):
 [bold #a9b1d6]Rollback[/]
   [#7aa2f7]/history[/]        List checkpoints
   [#7aa2f7]/rollback <id>[/]  Restore from checkpoint
-  [#7aa2f7]/diff [id][/]      Show changes since checkpoint
+  [#7aa2f7]/diff[/] [dim]\\[id][/]  Show changes since checkpoint
 
 [bold #a9b1d6]Memory[/]
-  [#7aa2f7]/memory[/]         View project memory
-  [#7aa2f7]/memory add[/]     Add note to memory
-  [#7aa2f7]/memory clear[/]   Clear memory
+  [#7aa2f7]/memory[/]         Open memory browser (TUI)
+  [#7aa2f7]/memory add[/]     Add note
+  [#7aa2f7]/memory help[/]    Show memory help
 
 [bold #a9b1d6]Export/Import[/]
   [#7aa2f7]/export[/]         Export session to markdown
@@ -1543,9 +1401,14 @@ class WingmanApp(App):
   [#7aa2f7]/model[/]          Switch model
   [#7aa2f7]/context[/]        Show context usage
 
+[bold #a9b1d6]Feedback[/]
+  [#7aa2f7]/bug[/]            Report a bug
+  [#7aa2f7]/feature[/]        Request a feature
+
 [bold #a9b1d6]Shortcuts[/]
-  [#7aa2f7]Ctrl+Z[/]  Undo (restore last checkpoint)
-  [#7aa2f7]Ctrl+B[/]  Background running command
+  [#7aa2f7]F1[/] or [#7aa2f7]Ctrl+/[/]  This help
+  [#7aa2f7]Ctrl+Z[/]          Undo (restore last checkpoint)
+  [#7aa2f7]Ctrl+B[/]          Background running command
 
 [dim]Working dir: {panel.working_dir if panel else Path.cwd()}[/]
 [dim]Panels: {panel_count} · Background: {bg_count} · Checkpoints: {cp_count} · Images: {img_count}[/]"""

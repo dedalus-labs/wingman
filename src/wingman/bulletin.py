@@ -172,7 +172,7 @@ def load_from_yaml(content: str) -> list[Bulletin]:
     """Parse bulletins from YAML content."""
     try:
         data = yaml.safe_load(content)
-        if not data or "messages" not in data:
+        if not data or not data.get("messages"):
             return []
         return [b for msg in data["messages"] if (b := _parse_bulletin(msg))]
     except yaml.YAMLError:

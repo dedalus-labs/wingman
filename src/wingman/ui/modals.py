@@ -122,6 +122,7 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
         super().__init__(**kwargs)
         self.entries = entries  # list[MemoryEntry]
         self._highlighted_idx: int = 0
+        self._pending_delete: bool = False
 
     def compose(self):
         with Vertical():
@@ -151,7 +152,9 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
             event.item.scroll_visible()
             idx = int(event.item.id.split("-")[1])
             self._highlighted_idx = idx
+            self._pending_delete = False  # Reset on navigation
             self._update_preview(idx)
+            self._update_hint()
 
     def _update_preview(self, idx: int) -> None:
         try:
@@ -165,9 +168,26 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
             pass
 
     def action_delete(self) -> None:
-        if self.entries and 0 <= self._highlighted_idx < len(self.entries):
+        if not self.entries or not (0 <= self._highlighted_idx < len(self.entries)):
+            return
+        if self._pending_delete:
+            # Confirmed - delete
             entry_id = self.entries[self._highlighted_idx].id
             self.dismiss(("delete", entry_id))
+        else:
+            # First press - ask for confirmation
+            self._pending_delete = True
+            self._update_hint()
+
+    def _update_hint(self) -> None:
+        try:
+            hint = self.query_one(".hint", Static)
+            if self._pending_delete:
+                hint.update("[#f7768e]Press d again to confirm delete[/] • Esc cancel")
+            else:
+                hint.update("↑↓ navigate • d delete • a add • Esc close")
+        except Exception:
+            pass
 
     def action_add(self) -> None:
         self.dismiss(("add", None))

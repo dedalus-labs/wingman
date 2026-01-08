@@ -1,6 +1,5 @@
 """Dynamic messaging system for banners, tips, and notices."""
 
-import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -12,6 +11,7 @@ import httpx
 import yaml
 
 from .config import APP_VERSION, CONFIG_DIR
+from .lib import oj
 
 # URLs and paths
 REMOTE_BASE = "https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin"
@@ -219,14 +219,14 @@ class BulletinManager:
     def _load_dismissed(self) -> None:
         if DISMISSED_FILE.exists():
             try:
-                data = json.loads(DISMISSED_FILE.read_text())
+                data = oj.loads(DISMISSED_FILE.read_text())
                 self._dismissed = set(data.get("dismissed", []))
             except Exception:
                 pass
 
     def _save_dismissed(self) -> None:
         DISMISSED_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DISMISSED_FILE.write_text(json.dumps({"dismissed": list(self._dismissed)}))
+        DISMISSED_FILE.write_text(oj.dumps({"dismissed": list(self._dismissed)}))
 
     def dismiss(self, bulletin_id: str, persist: bool = False) -> None:
         """Dismiss a bulletin."""

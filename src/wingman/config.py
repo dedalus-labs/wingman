@@ -1,10 +1,11 @@
 """Configuration and constants."""
 
-import json
 from importlib.metadata import version
 from pathlib import Path
 
 import httpx
+
+from .lib import oj
 
 # Paths
 CONFIG_DIR = Path.home() / ".wingman"
@@ -88,6 +89,8 @@ COMMANDS = [
     ("/key", "API key"),
     ("/clear", "Clear chat"),
     ("/help", "Show help"),
+    ("/bug", "Report a bug"),
+    ("/feature", "Request feature"),
 ]
 
 
@@ -95,7 +98,7 @@ def load_api_key() -> str | None:
     """Load API key from config file."""
     if CONFIG_FILE.exists():
         try:
-            config = json.loads(CONFIG_FILE.read_text())
+            config = oj.loads(CONFIG_FILE.read_text())
             return config.get("api_key")
         except Exception:
             pass
@@ -108,11 +111,11 @@ def save_api_key(api_key: str) -> None:
     config = {}
     if CONFIG_FILE.exists():
         try:
-            config = json.loads(CONFIG_FILE.read_text())
+            config = oj.loads(CONFIG_FILE.read_text())
         except Exception:
             pass
     config["api_key"] = api_key
-    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    CONFIG_FILE.write_text(oj.dumps(config, indent=2))
 
 
 async def fetch_marketplace_servers() -> list[dict]:

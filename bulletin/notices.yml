@@ -1,8 +1,9 @@
+---
 # Wingman Notices
 # Important announcements, deprecation warnings, maintenance alerts
 #
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin/schema.json
 # Rich markup: https://rich.readthedocs.io/en/stable/markup.html
-# Schema: schema.json
 
 version: 1
 

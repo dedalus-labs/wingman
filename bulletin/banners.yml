@@ -1,18 +1,16 @@
+---
 # Wingman Banners
-# These are fetched at runtime from GitHub raw URL
-# Changes here propagate without releasing a new version
+# Displayed messages on the homepage
 #
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin/schema.json
 # Rich markup: https://rich.readthedocs.io/en/stable/markup.html
-# Schema: schema.json
 
 version: 1
 
 messages:
   - id: "beta-free-models"
     type: banner
-    content: "[bold #9ece6a]✨ All models free during beta![/] No usage limits."
+    content: "Use any model for [bold]FREE[/bold] until Jan 12th, 2026."
     conditions:
-      until: "2026-12-31T23:59:59Z"
+      until: "2026-01-12T23:59:59Z"
     priority: 100
-    dismissible: true
-    dismiss_persist: true

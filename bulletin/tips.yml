@@ -1,36 +1,29 @@
+---
 # Wingman Tips
-# Shown randomly on welcome screen or as hints
+# Randomly show one on the welcome screen
 #
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin/schema.json
 # Rich markup: https://rich.readthedocs.io/en/stable/markup.html
-# Schema: schema.json
 
 version: 1
 
 messages:
   - id: "tip-model-switch"
     type: tip
-    content: "Press [bold]Ctrl+M[/] to quickly switch models"
+    content: "[bold]Ctrl+M[/] to switch models"
 
   - id: "tip-split-panels"
     type: tip
-    content: "Use [bold]Ctrl+\\[/] to split into multiple chat panels"
-
-  - id: "tip-image-support"
-    type: tip
-    content: "Paste or drag image paths to include them in your prompt"
-
-  - id: "tip-slash-commands"
-    type: tip
-    content: "Type [bold]/[/] to see all available commands"
+    content: "[bold]/split[/] to open another panel"
 
   - id: "tip-coding-mode"
     type: tip
-    content: "[bold]Ctrl+K[/] toggles coding mode for file operations"
+    content: "[bold]Ctrl+K[/] toggles coding mode"
 
   - id: "tip-context-usage"
     type: tip
-    content: "Run [bold]/context[/] to see how much of the context window you're using"
+    content: "[bold]/context[/] to check usage"
 
   - id: "tip-checkpoints"
     type: tip
-    content: "Wingman auto-saves checkpoints. Use [bold]/history[/] to browse and [bold]/rollback[/] to restore"
+    content: "[bold]/history[/] to browse checkpoints"

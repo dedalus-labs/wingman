@@ -98,7 +98,7 @@ COMMANDS = [
 COMMAND_OPTIONS: dict[str, list[str]] = {
     "export": ["json"],
     "memory": ["add", "clear", "delete", "help"],
-    "mcp": ["clear"],
+    "mcp": ["clear", "list", "remove"],
 }
 
 
@@ -124,6 +124,66 @@ def save_api_key(api_key: str) -> None:
             pass
     config["api_key"] = api_key
     CONFIG_FILE.write_text(oj.dumps(config, indent=2))
+
+
+INSTRUCTION_FILENAMES = ["AGENTS.md", "WINGMAN.md"]
+MAX_INSTRUCTION_BYTES = 32 * 1024  # 32KB limit per file
+
+
+def load_instructions(working_dir: Path | None = None) -> str:
+    """Load instructions from ~/.wingman/AGENTS.md (global) and .wingman/AGENTS.md (local).
+
+    Returns combined instructions with hierarchy framing, or empty string if none found.
+    Global instructions take precedence; local instructions provide project context.
+    """
+    global_content: str | None = None
+    local_content: str | None = None
+
+    # Global instructions (~/.wingman/AGENTS.md) - higher priority, user-level defaults
+    for name in INSTRUCTION_FILENAMES:
+        global_path = CONFIG_DIR / name
+        try:
+            if global_path.is_file():
+                content = global_path.read_text("utf-8", errors="ignore")[:MAX_INSTRUCTION_BYTES]
+                if content.strip():
+                    global_content = content.strip()
+                break
+        except (OSError, IOError):
+            continue
+
+    # Local instructions - AGENTS.md in working directory (project root)
+    if working_dir:
+        for name in INSTRUCTION_FILENAMES:
+            local_path = working_dir / name
+            try:
+                if local_path.is_file():
+                    content = local_path.read_text("utf-8", errors="ignore")[:MAX_INSTRUCTION_BYTES]
+                    if content.strip():
+                        local_content = content.strip()
+                    break
+            except (OSError, IOError):
+                continue
+
+    # Combine with hierarchy framing
+    if not global_content and not local_content:
+        return ""
+
+    sections: list[str] = ["## Custom Instructions"]
+
+    if global_content and local_content:
+        sections.append(
+            "The following instructions are provided at two levels. "
+            "Global instructions (from ~/.wingman/) represent the user's general preferences and take precedence. "
+            "Project instructions (from .wingman/) provide local context but should not override global directives."
+        )
+        sections.append(f"### Global Instructions (Higher Priority)\n{global_content}")
+        sections.append(f"### Project Instructions (Local Context)\n{local_content}")
+    elif global_content:
+        sections.append(f"### Global Instructions\n{global_content}")
+    else:
+        sections.append(f"### Project Instructions\n{local_content}")
+
+    return "\n\n".join(sections)
 
 
 async def fetch_marketplace_servers() -> list[dict]:

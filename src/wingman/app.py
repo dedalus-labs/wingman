@@ -17,6 +17,7 @@ from textual.widgets import Input, Static, Tree
 
 from .checkpoints import get_checkpoint_manager, set_current_session
 from .command_completion import get_hint_candidates
+from .completion_providers import mcp_remove_provider
 from .config import (
     APP_CREDIT,
     APP_NAME,
@@ -25,6 +26,7 @@ from .config import (
     MODELS,
     fetch_marketplace_servers,
     load_api_key,
+    load_instructions,
 )
 from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
@@ -472,7 +474,8 @@ class WingmanApp(App):
                     return
 
         if text.startswith("/"):
-            matches = get_hint_candidates(text, event.input.cursor_position)
+            provider = mcp_remove_provider(panel.mcp_servers) if panel else None
+            matches = get_hint_candidates(text, event.input.cursor_position, provider)
             formatted = "  ".join(f"[#7aa2f7]{cmd}[/]" for cmd in matches)
             hint.update(formatted if formatted else "")
         elif panel.pending_images:
@@ -584,6 +587,10 @@ class WingmanApp(App):
 
             if self.coding_mode:
                 system_content = CODING_SYSTEM_PROMPT.format(cwd=panel.working_dir)
+                # Include custom instructions (global first, then local)
+                instructions = load_instructions(panel.working_dir)
+                if instructions:
+                    system_content += f"\n\n{instructions}"
                 # Include project memory if available
                 memory = load_memory()
                 if memory.entries:

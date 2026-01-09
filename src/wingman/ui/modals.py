@@ -237,34 +237,77 @@ class DiffModal(ModalScreen[bool]):
         Binding("q", "reject", "Reject"),
     ]
 
+    CONTEXT_LINES = 3
+
     def __init__(self, path: str, old_string: str, new_string: str, **kwargs):
         super().__init__(**kwargs)
         self.path = path
         self.old_string = old_string
         self.new_string = new_string
 
-    def compose(self):
-        diff_lines = list(
-            difflib.unified_diff(
-                self.old_string.splitlines(keepends=True),
-                self.new_string.splitlines(keepends=True),
-                lineterm="",
-            )
-        )
+    def _get_diff_with_context(self) -> str:
+        """Generate diff with surrounding file context and line numbers."""
+        from pathlib import Path
+
+        old_lines = self.old_string.splitlines() if self.old_string else []
+        new_lines = self.new_string.splitlines() if self.new_string else []
+
+        # Try to read the actual file for context
+        match_start = 0
+        file_lines: list[str] = []
+        try:
+            file_path = Path(self.path)
+            if file_path.exists():
+                file_content = file_path.read_text()
+                file_lines = file_content.splitlines()
+
+                # Find where old_string starts in the file
+                if old_lines:
+                    for i in range(len(file_lines) - len(old_lines) + 1):
+                        if file_lines[i : i + len(old_lines)] == old_lines:
+                            match_start = i
+                            break
+        except Exception:
+            pass
+
+        ctx = self.CONTEXT_LINES
+        change_len = max(len(old_lines), len(new_lines), 1)
+        start = max(0, match_start - ctx)
+        end = min(len(file_lines), match_start + len(old_lines) + ctx) if file_lines else 0
+
+        # Compute line number width
+        max_line = max(end, match_start + change_len) + len(new_lines)
+        num_width = max(len(str(max_line)), 2)
 
         formatted = []
-        for line in diff_lines:
-            if line.startswith("@@") or line.startswith("---") or line.startswith("+++"):
-                continue
-            escaped = escape(line.rstrip())
-            if line.startswith("+"):
-                formatted.append(f"[#9ece6a]{escaped}[/]")
-            elif line.startswith("-"):
-                formatted.append(f"[#f7768e]{escaped}[/]")
-            elif line.strip():
-                formatted.append(f"[#a9b1d6]{escaped}[/]")
 
-        diff_text = "\n".join(formatted) if formatted else "[dim]No visible changes[/]"
+        # Context before (from file)
+        for i in range(start, match_start):
+            ln = str(i + 1).rjust(num_width)
+            formatted.append(f"[#565f89]{ln}   {escape(file_lines[i])}[/]")
+
+        # Show removed lines (old_string)
+        for i, line in enumerate(old_lines):
+            ln = str(match_start + i + 1).rjust(num_width)
+            formatted.append(f"[#f7768e]{ln} - {escape(line)}[/]")
+
+        # Show added lines (new_string)
+        for i, line in enumerate(new_lines):
+            ln = str(match_start + i + 1).rjust(num_width)
+            formatted.append(f"[#9ece6a]{ln} + {escape(line)}[/]")
+
+        # Context after (from file)
+        ctx_start = match_start + len(old_lines)
+        for i in range(ctx_start, end):
+            # Line numbers after change account for size difference
+            actual_line = i + 1 + (len(new_lines) - len(old_lines))
+            ln = str(actual_line).rjust(num_width)
+            formatted.append(f"[#565f89]{ln}   {escape(file_lines[i])}[/]")
+
+        return "\n".join(formatted) if formatted else "[dim]No visible changes[/]"
+
+    def compose(self):
+        diff_text = self._get_diff_with_context()
 
         display_path = self.path
         if len(display_path) > 60:
@@ -272,7 +315,7 @@ class DiffModal(ModalScreen[bool]):
 
         with Vertical():
             with Vertical(classes="header"):
-                yield Static(Text.from_markup(f"[bold #7aa2f7]Pending Edit[/]"))
+                yield Static(Text.from_markup("[bold #7aa2f7]Pending Edit[/]"))
                 yield Static(Text.from_markup(f"[#565f89]{escape(display_path)}[/]"), classes="filepath")
             yield Static(Text.from_markup(diff_text), classes="diff-view")
             yield Static(

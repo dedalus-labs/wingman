@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from .config import COMMANDS, COMMAND_OPTIONS
 
@@ -13,6 +14,21 @@ class CompletionResult:
 
     value: str
     cursor_position: int
+
+
+@dataclass(frozen=True)
+class CompletionRequest:
+    """Request passed to dynamic completion providers."""
+
+    value: str
+    cursor_position: int
+    command: str
+    args: list[str]
+    active_index: int
+    active_text: str
+
+
+CandidateProvider = Callable[[CompletionRequest], list[str] | None]
 
 
 @dataclass(frozen=True)
@@ -38,17 +54,22 @@ class _TokenSpan:
     end: int
 
 
-def complete_command_input(value: str, cursor_position: int) -> CompletionResult | None:
+def complete_command_input(
+    value: str,
+    cursor_position: int,
+    candidate_provider: CandidateProvider | None = None,
+) -> CompletionResult | None:
     """Apply tab completion for slash commands and their first-arg options.
 
     Args:
         value: Current input value.
         cursor_position: Cursor position in the input.
+        candidate_provider: Optional provider for dynamic candidates.
 
     Returns:
         CompletionResult if a completion was applied, otherwise None.
     """
-    context = get_completion_context(value, cursor_position)
+    context = get_completion_context(value, cursor_position, candidate_provider)
     if context is None or not context.candidates:
         return None
 
@@ -59,7 +80,11 @@ def complete_command_input(value: str, cursor_position: int) -> CompletionResult
     return apply_completion(context, completion, add_space)
 
 
-def get_completion_context(value: str, cursor_position: int) -> CompletionContext | None:
+def get_completion_context(
+    value: str,
+    cursor_position: int,
+    candidate_provider: CandidateProvider | None = None,
+) -> CompletionContext | None:
     """Get completion context for the current input and cursor."""
     parsed = _parse_context(value, cursor_position)
     if parsed is None:
@@ -79,7 +104,12 @@ def get_completion_context(value: str, cursor_position: int) -> CompletionContex
         kind = "option"
         include_slash = False
     else:
-        return None
+        candidates = _get_dynamic_matches(parsed, value, cursor_position, candidate_provider)
+        if not candidates:
+            return None
+        prefix = parsed.active.text
+        kind = "argument"
+        include_slash = False
 
     return CompletionContext(
         value=value,
@@ -93,12 +123,17 @@ def get_completion_context(value: str, cursor_position: int) -> CompletionContex
     )
 
 
-def get_hint_candidates(value: str, cursor_position: int | None = None) -> list[str]:
+def get_hint_candidates(
+    value: str,
+    cursor_position: int | None = None,
+    candidate_provider: CandidateProvider | None = None,
+) -> list[str]:
     """Get command or option hint candidates for the current input.
 
     Args:
         value: Current input value.
         cursor_position: Optional cursor position, defaults to end of input.
+        candidate_provider: Optional provider for dynamic candidates.
 
     Returns:
         List of candidate strings for display.
@@ -131,6 +166,12 @@ def get_hint_candidates(value: str, cursor_position: int | None = None) -> list[
             return []
         return matches
 
+    dynamic = _get_dynamic_matches(context, value, cursor_position, candidate_provider)
+    if dynamic:
+        if len(dynamic) == 1 and dynamic[0] == context.active.text:
+            return []
+        return dynamic
+
     return []
 
 
@@ -141,6 +182,36 @@ class _CompletionContext:
     tokens: list[_TokenSpan]
     active_index: int
     active: _TokenSpan
+
+
+def _build_request(
+    context: _CompletionContext,
+    value: str,
+    cursor_position: int,
+) -> CompletionRequest:
+    return CompletionRequest(
+        value=value,
+        cursor_position=cursor_position,
+        command=context.command,
+        args=[token.text for token in context.tokens[1:]],
+        active_index=context.active_index,
+        active_text=context.active.text,
+    )
+
+
+def _get_dynamic_matches(
+    context: _CompletionContext,
+    value: str,
+    cursor_position: int,
+    candidate_provider: CandidateProvider | None,
+) -> list[str]:
+    if not candidate_provider:
+        return []
+    request = _build_request(context, value, cursor_position)
+    candidates = candidate_provider(request)
+    if not candidates:
+        return []
+    return _match_options(context.active.text, candidates)
 
 
 def _parse_context(value: str, cursor_position: int) -> _CompletionContext | None:

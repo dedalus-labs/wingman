@@ -17,6 +17,7 @@ from textual.widgets import Input, Static
 
 from ..bulletin import get_bulletin_manager
 from ..command_completion import CompletionContext, apply_completion, get_completion_context, resolve_completion
+from ..completion_providers import mcp_remove_provider
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
@@ -122,7 +123,9 @@ class MultilineInput(Input):
         if self._completion_cycle and self._completion_cycle.is_active_for(self.value, self.cursor_position):
             self._apply_cycle_candidate(self._completion_cycle.next_index())
             return True
-        context = get_completion_context(self.value, self.cursor_position)
+        panel = self._get_panel()
+        provider = mcp_remove_provider(panel.mcp_servers) if panel else None
+        context = get_completion_context(self.value, self.cursor_position, provider)
         if context is None or not context.candidates:
             self._completion_cycle = None
             return True
@@ -193,6 +196,12 @@ class MultilineInput(Input):
             self._paste_placeholder = None
             return content
         return self.value
+
+    def _get_panel(self) -> "ChatPanel | None":
+        for ancestor in self.ancestors_with_self:
+            if isinstance(ancestor, ChatPanel):
+                return ancestor
+        return None
 
     def _start_completion_cycle(self, context: CompletionContext) -> None:
         if not context.candidates:

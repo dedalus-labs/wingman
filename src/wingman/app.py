@@ -17,7 +17,6 @@ from textual.widgets import Input, Static, Tree
 
 from .checkpoints import get_checkpoint_manager, set_current_session
 from .command_completion import get_hint_candidates
-from .completion_providers import mcp_remove_provider
 from .config import (
     APP_CREDIT,
     APP_NAME,
@@ -36,6 +35,7 @@ from .sessions import delete_session, load_sessions, rename_session, save_sessio
 from .tools import (
     CODING_SYSTEM_PROMPT,
     add_text_segment,
+    check_completed_processes,
     clear_segments,
     create_tools,
     get_background_processes,
@@ -139,6 +139,8 @@ class WingmanApp(App):
             self.push_screen(APIKeyScreen(), self._on_api_key_entered)
         # Fetch marketplace servers in background
         self._init_dynamic_data()
+        # Monitor background processes for completion
+        self.set_interval(2.0, self._check_background_processes)
 
     @work(thread=False)
     async def _init_dynamic_data(self) -> None:
@@ -147,6 +149,17 @@ class WingmanApp(App):
         if servers:
             MARKETPLACE_SERVERS.clear()
             MARKETPLACE_SERVERS.extend(servers)
+
+    def _check_background_processes(self) -> None:
+        """Periodic check for completed background processes."""
+        completed = check_completed_processes()
+        for panel_id, bg_id, exit_code, command in completed:
+            # Shorten command for display
+            cmd_short = command[:40] + "..." if len(command) > 40 else command
+            if exit_code == 0:
+                self.notify(f"[{bg_id}] completed: {cmd_short}", timeout=5.0)
+            else:
+                self.notify(f"[{bg_id}] failed (exit {exit_code}): {cmd_short}", timeout=5.0, severity="error")
 
     def _on_api_key_entered(self, api_key: str | None) -> None:
         """Callback when API key is entered."""
@@ -474,8 +487,11 @@ class WingmanApp(App):
                     return
 
         if text.startswith("/"):
-            provider = mcp_remove_provider(panel.mcp_servers) if panel else None
-            matches = get_hint_candidates(text, event.input.cursor_position, provider)
+            # Don't overwrite hint if actively cycling through completions for this exact input
+            cycle = getattr(event.input, "_completion_cycle", None)
+            if cycle and cycle.is_active_for(text, event.input.cursor_position):
+                return
+            matches = get_hint_candidates(text, event.input.cursor_position)
             formatted = "  ".join(f"[#7aa2f7]{cmd}[/]" for cmd in matches)
             hint.update(formatted if formatted else "")
         elif panel.pending_images:
@@ -866,7 +882,9 @@ class WingmanApp(App):
 
     def action_background(self) -> None:
         """Request backgrounding of current command (Ctrl+B)."""
-        request_background()
+        panel = self.active_panel
+        if panel:
+            request_background(panel.panel_id)
 
     def action_toggle_sidebar(self) -> None:
         """Toggle sidebar visibility."""
@@ -1093,47 +1111,45 @@ class WingmanApp(App):
         if not panel:
             return
         if not arg:
-            self.action_add_mcp()
-        elif arg == "list":
-            if not panel.mcp_servers:
-                self._show_info("No MCP servers configured")
-            else:
-                servers = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(panel.mcp_servers))
-                self._show_info(f"[bold]Active MCP servers:[/]\n{servers}\n[dim]Use /mcp remove <number> to remove[/]")
+            self._show_mcp_modal()
         elif arg == "clear":
             panel.mcp_servers = []
             self._show_info("Cleared all MCP servers")
             self._update_status()
-        elif arg.startswith("remove "):
-            if not panel.mcp_servers:
-                self._show_info("No MCP servers to remove")
-                return
-            target = arg[7:].strip()
-            # Check if it's a number
-            if target.isdigit():
-                idx = int(target) - 1  # 1-indexed
-                if 0 <= idx < len(panel.mcp_servers):
-                    removed = panel.mcp_servers.pop(idx)
-                    self._show_info(f"Removed MCP server: {removed}")
-                    self._update_status()
-                else:
-                    self._show_info(f"Invalid index: {target} (have {len(panel.mcp_servers)} servers)")
-            elif target in panel.mcp_servers:
-                panel.mcp_servers.remove(target)
-                self._show_info(f"Removed MCP server: {target}")
-                self._update_status()
-            else:
-                self._show_info(f"Server not found: {target}")
-        elif arg == "remove":
-            self._show_info("Usage: /mcp remove <server>")
         else:
-            # Check for duplicates before adding
+            # Direct add: /mcp <server-url>
             if arg in panel.mcp_servers:
                 self._show_info(f"MCP server already added: {arg}")
             else:
                 panel.mcp_servers.append(arg)
                 self._show_info(f"Added MCP server: {arg}")
                 self._update_status()
+
+    def _show_mcp_modal(self) -> None:
+        from .ui.modals import MCPModal
+
+        panel = self.active_panel
+        if not panel:
+            return
+        self.push_screen(MCPModal(panel.mcp_servers.copy()), self._on_mcp_action)
+
+    def _on_mcp_action(self, result: tuple[str, str | None] | None) -> None:
+        if not result:
+            return
+        panel = self.active_panel
+        if not panel:
+            return
+        action, server = result
+        if action == "delete" and server:
+            if server in panel.mcp_servers:
+                panel.mcp_servers.remove(server)
+                self.notify(f"Removed: {server}", timeout=2.0)
+                self._update_status()
+            # Reopen modal with updated list
+            if panel.mcp_servers:
+                self._show_mcp_modal()
+        elif action == "add":
+            self.action_add_mcp()
 
     def _cmd_code(self, arg: str) -> None:
         self.coding_mode = not self.coding_mode
@@ -1521,9 +1537,9 @@ Useful for: API patterns, file locations, conventions.
             self._show_info("[#f7768e]Failed to restore checkpoint[/]")
 
     def action_help(self) -> None:
-        bg_count = len(get_background_processes())
-        cp_count = len(get_checkpoint_manager()._checkpoints)
         panel = self.active_panel
+        bg_count = len(get_background_processes(panel.panel_id if panel else None))
+        cp_count = len(get_checkpoint_manager()._checkpoints)
         img_count = len(panel.pending_images) if panel else 0
         panel_count = len(self.panels)
         help_text = f"""[bold #7aa2f7]{APP_NAME}[/] [dim]v{APP_VERSION} · {APP_CREDIT}[/]

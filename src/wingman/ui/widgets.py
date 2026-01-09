@@ -17,7 +17,6 @@ from textual.widgets import Input, Static
 
 from ..bulletin import get_bulletin_manager
 from ..command_completion import CompletionContext, apply_completion, get_completion_context, resolve_completion
-from ..completion_providers import mcp_remove_provider
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
@@ -123,9 +122,7 @@ class MultilineInput(Input):
         if self._completion_cycle and self._completion_cycle.is_active_for(self.value, self.cursor_position):
             self._apply_cycle_candidate(self._completion_cycle.next_index())
             return True
-        panel = self._get_panel()
-        provider = mcp_remove_provider(panel.mcp_servers) if panel else None
-        context = get_completion_context(self.value, self.cursor_position, provider)
+        context = get_completion_context(self.value, self.cursor_position)
         if context is None or not context.candidates:
             self._completion_cycle = None
             return True
@@ -211,6 +208,7 @@ class MultilineInput(Input):
         self.value = result.value
         self.cursor_position = result.cursor_position
         self._completion_cycle = _CompletionCycle.from_context(context, result.value, result.cursor_position, index=0)
+        self._update_cycle_hint()
 
     def _apply_cycle_candidate(self, candidate_index: int) -> None:
         if not self._completion_cycle:
@@ -225,6 +223,23 @@ class MultilineInput(Input):
             result.value,
             result.cursor_position,
         )
+        self._update_cycle_hint()
+
+    def _update_cycle_hint(self) -> None:
+        """Update hint to show cycling candidates with current selection highlighted."""
+        panel = self._get_panel()
+        if not panel or not self._completion_cycle:
+            return
+        hint = panel.get_hint()
+        candidates = self._completion_cycle.candidates
+        current_idx = self._completion_cycle.index
+        parts = []
+        for i, cand in enumerate(candidates):
+            if i == current_idx:
+                parts.append(f"[bold #9ece6a]{cand}[/]")
+            else:
+                parts.append(f"[#7aa2f7]{cand}[/]")
+        hint.update("  ".join(parts))
 
 class ChatMessage(Static):
     """Single chat message."""

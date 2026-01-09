@@ -97,7 +97,6 @@ class SelectionModal(ModalScreen[str | None]):
 
     @on(ListView.Highlighted)
     def on_highlight(self, event: ListView.Highlighted) -> None:
-        """Scroll highlighted item into view."""
         if event.item:
             event.item.scroll_visible()
 
@@ -178,6 +177,69 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
             self.dismiss(("delete", entry_id))
         else:
             # First press - ask for confirmation
+            self._pending_delete = True
+            self._update_hint()
+
+    def _update_hint(self) -> None:
+        try:
+            hint = self.query_one(".hint", Static)
+            if self._pending_delete:
+                hint.update("[#f7768e]Press d again to confirm delete[/] • Esc/q cancel")
+            else:
+                hint.update("↑↓ navigate • d delete • a add • Esc/q close")
+        except Exception:
+            pass
+
+    def action_add(self) -> None:
+        self.dismiss(("add", None))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class MCPModal(ModalScreen[tuple[str, str | None] | None]):
+    """Modal for browsing and managing MCP servers."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("q", "cancel", "Cancel"),
+        Binding("d", "delete", "Delete"),
+        Binding("a", "add", "Add"),
+    ]
+
+    def __init__(self, servers: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.servers = servers
+        self._highlighted_idx: int = 0
+        self._pending_delete: bool = False
+
+    def compose(self):
+        with Vertical():
+            yield Label("MCP Servers", classes="title")
+            if self.servers:
+                items = [ListItem(Label(f"{i+1}. {s}"), id=f"mcp-{i}") for i, s in enumerate(self.servers)]
+                yield ListView(*items)
+                yield Static("↑↓ navigate • d delete • a add • Esc/q close", classes="hint")
+            else:
+                yield Static("No MCP servers configured.\nUse 'a' to add or Ctrl+G", classes="empty")
+                yield Static("a add • Esc/q close", classes="hint")
+
+    @on(ListView.Highlighted)
+    def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item:
+            event.item.scroll_visible()
+            idx = int(event.item.id.split("-")[1])
+            self._highlighted_idx = idx
+            self._pending_delete = False
+            self._update_hint()
+
+    def action_delete(self) -> None:
+        if not self.servers or not (0 <= self._highlighted_idx < len(self.servers)):
+            return
+        if self._pending_delete:
+            server = self.servers[self._highlighted_idx]
+            self.dismiss(("delete", server))
+        else:
             self._pending_delete = True
             self._update_hint()
 

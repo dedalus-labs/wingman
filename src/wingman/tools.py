@@ -101,6 +101,7 @@ class BackgroundProcess:
     process: subprocess.Popen
     output_buffer: list[str] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
+    notified: bool = False  # Whether completion notification was shown
 
     def read_output(self) -> None:
         if not self.process.stdout:
@@ -132,7 +133,7 @@ class BackgroundProcess:
 # Background processes per panel
 _panel_background_processes: dict[str, dict[str, BackgroundProcess]] = {}
 _next_bg_id: int = 1
-_background_requested: bool = False
+_background_requested: dict[str, bool] = {}  # Per-panel background request flags
 _command_widget_counter: int = 0
 
 # Track segments (text + tool calls) per panel for session persistence
@@ -208,10 +209,10 @@ def _track_tool_call(command: str, output: str, status: str, panel_id: str | Non
     )
 
 
-def request_background() -> None:
+def request_background(panel_id: str | None = None) -> None:
     """Called when user presses Ctrl+B to background current command."""
-    global _background_requested
-    _background_requested = True
+    if panel_id:
+        _background_requested[panel_id] = True
 
 
 def get_background_processes(panel_id: str | None = None) -> dict[str, BackgroundProcess]:
@@ -219,6 +220,22 @@ def get_background_processes(panel_id: str | None = None) -> dict[str, Backgroun
     if not panel_id:
         return {}
     return _panel_background_processes.get(panel_id, {})
+
+
+def check_completed_processes() -> list[tuple[str, str, int, str]]:
+    """Check for completed background processes that haven't been notified.
+
+    Returns list of (panel_id, bg_id, exit_code, command) for newly completed processes.
+    """
+    completed = []
+    for panel_id, processes in _panel_background_processes.items():
+        for bg_id, proc in processes.items():
+            if not proc.is_running() and not proc.notified:
+                proc.notified = True
+                proc.read_output()  # Capture final output
+                exit_code = proc.process.returncode or 0
+                completed.append((panel_id, bg_id, exit_code, proc.command))
+    return completed
 
 
 async def _show_command_widget(command: str, panel_id: str | None = None) -> str:
@@ -599,7 +616,7 @@ async def _search_files_impl(
 
 async def _run_command_impl(command: str, working_dir: Path, panel_id: str | None = None) -> str:
     """Run a shell command and return the output."""
-    global _background_requested, _next_bg_id
+    global _next_bg_id
 
     approved, feedback = await request_tool_approval("run_command", f"$ {command}", panel_id)
     if not approved:
@@ -610,7 +627,9 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
         _track_tool_call(f"$ {command}", msg, "error", panel_id)
         return msg
 
-    _background_requested = False
+    # Clear any pending background request for this panel
+    if panel_id:
+        _background_requested[panel_id] = False
     widget_id = await _show_command_widget(command, panel_id)
 
     try:
@@ -631,8 +650,8 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
         while True:
             await asyncio.sleep(0.05)
 
-            if _background_requested:
-                _background_requested = False
+            if panel_id and _background_requested.get(panel_id, False):
+                _background_requested[panel_id] = False
                 bg_id = f"bg_{_next_bg_id}"
                 _next_bg_id += 1
 
@@ -643,10 +662,9 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
                     output_buffer=output_lines.copy(),
                 )
                 # Store in per-panel dict
-                if panel_id:
-                    if panel_id not in _panel_background_processes:
-                        _panel_background_processes[panel_id] = {}
-                    _panel_background_processes[panel_id][bg_id] = bg_proc
+                if panel_id not in _panel_background_processes:
+                    _panel_background_processes[panel_id] = {}
+                _panel_background_processes[panel_id][bg_id] = bg_proc
 
                 await _update_command_status(widget_id, "backgrounded", panel_id=panel_id)
                 _track_tool_call(f"$ {command}", "backgrounded", "success", panel_id)

@@ -24,41 +24,62 @@ APP_CREDIT = "Dedalus Labs"
 DEDALUS_SITE_URL = "https://dedaluslabs.ai"
 
 
-# Models
+# Models (verified in models.dev)
 DEFAULT_MODELS = [
-    # OpenAI
+    # OpenAI Chat
+    "openai/gpt-5.2",
+    "openai/gpt-5.1",
     "openai/gpt-5",
     "openai/gpt-5-mini",
+    "openai/gpt-5-nano",
+    "openai/gpt-5-chat-latest",
     "openai/gpt-4.1",
     "openai/gpt-4.1-mini",
+    "openai/gpt-4.1-nano",
     "openai/gpt-4o",
+    "openai/gpt-4o-2024-05-13",
     "openai/gpt-4o-mini",
+    "openai/gpt-4-turbo",
+    "openai/gpt-4",
+    "openai/gpt-3.5-turbo",
+    # OpenAI Reasoning
     "openai/o1",
     "openai/o3",
     "openai/o3-mini",
     "openai/o4-mini",
-    "openai/gpt-4-turbo",
     # Anthropic
-    "anthropic/claude-opus-4-5-20251101",
-    "anthropic/claude-sonnet-4-5-20250929",
+    "anthropic/claude-opus-4-5",
     "anthropic/claude-haiku-4-5-20251001",
+    "anthropic/claude-sonnet-4-5-20250929",
+    "anthropic/claude-opus-4-1-20250805",
+    "anthropic/claude-opus-4-20250514",
     "anthropic/claude-sonnet-4-20250514",
+    "anthropic/claude-3-7-sonnet-20250219",
+    "anthropic/claude-3-5-haiku-20241022",
+    "anthropic/claude-3-haiku-20240307",
     # Google
+    "google/gemini-3-pro-preview",
+    "google/gemini-3-flash-preview",
     "google/gemini-2.5-pro",
     "google/gemini-2.5-flash",
+    "google/gemini-2.5-flash-lite",
     "google/gemini-2.0-flash",
+    "google/gemini-2.0-flash-lite",
     # xAI
-    "xai/grok-4-fast-reasoning",
+    "xai/grok-4-1-fast-non-reasoning",
     "xai/grok-4-fast-non-reasoning",
+    "xai/grok-code-fast-1",
     "xai/grok-3",
     "xai/grok-3-mini",
+    "xai/grok-2-vision-1212",
     # DeepSeek
     "deepseek/deepseek-chat",
     "deepseek/deepseek-reasoner",
     # Mistral
     "mistral/mistral-large-latest",
+    "mistral/mistral-medium-latest",
     "mistral/mistral-small-latest",
-    "mistral/codestral-2508",
+    "mistral/pixtral-12b",
 ]
 
 MODELS: list[str] = DEFAULT_MODELS.copy()
@@ -98,7 +119,7 @@ COMMANDS = [
 COMMAND_OPTIONS: dict[str, list[str]] = {
     "export": ["json"],
     "memory": ["add", "clear", "delete", "help"],
-    "mcp": ["clear", "list", "remove"],
+    "mcp": ["clear"],
 }
 
 
@@ -131,15 +152,18 @@ MAX_INSTRUCTION_BYTES = 32 * 1024  # 32KB limit per file
 
 
 def load_instructions(working_dir: Path | None = None) -> str:
-    """Load instructions from ~/.wingman/AGENTS.md (global) and .wingman/AGENTS.md (local).
+    """Load custom instructions from global and local sources.
+
+    Searches for AGENTS.md or WINGMAN.md (first found wins) in:
+    - Global: ~/.wingman/ (user-level preferences, higher priority)
+    - Local: {working_dir}/ (project-specific context)
 
     Returns combined instructions with hierarchy framing, or empty string if none found.
-    Global instructions take precedence; local instructions provide project context.
     """
     global_content: str | None = None
     local_content: str | None = None
 
-    # Global instructions (~/.wingman/AGENTS.md) - higher priority, user-level defaults
+    # Global instructions (~/.wingman/AGENTS.md or WINGMAN.md)
     for name in INSTRUCTION_FILENAMES:
         global_path = CONFIG_DIR / name
         try:
@@ -147,11 +171,11 @@ def load_instructions(working_dir: Path | None = None) -> str:
                 content = global_path.read_text("utf-8", errors="ignore")[:MAX_INSTRUCTION_BYTES]
                 if content.strip():
                     global_content = content.strip()
-                break
+                    break
         except (OSError, IOError):
             continue
 
-    # Local instructions - AGENTS.md in working directory (project root)
+    # Local instructions ({working_dir}/AGENTS.md or WINGMAN.md)
     if working_dir:
         for name in INSTRUCTION_FILENAMES:
             local_path = working_dir / name
@@ -160,7 +184,7 @@ def load_instructions(working_dir: Path | None = None) -> str:
                     content = local_path.read_text("utf-8", errors="ignore")[:MAX_INSTRUCTION_BYTES]
                     if content.strip():
                         local_content = content.strip()
-                    break
+                        break
             except (OSError, IOError):
                 continue
 

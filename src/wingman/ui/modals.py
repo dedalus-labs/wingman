@@ -81,6 +81,7 @@ class SelectionModal(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("q", "cancel", "Cancel"),
     ]
 
     def __init__(self, title: str, items: list[str], **kwargs):
@@ -92,7 +93,7 @@ class SelectionModal(ModalScreen[str | None]):
         with Vertical():
             yield Label(self.title_text, classes="title")
             yield ListView(*[ListItem(Label(item), id=f"item-{i}") for i, item in enumerate(self.items)])
-            yield Static("↑↓ navigate • Enter select • Esc cancel", classes="hint")
+            yield Static("↑↓ navigate • Enter select • Esc/q cancel", classes="hint")
 
     @on(ListView.Highlighted)
     def on_highlight(self, event: ListView.Highlighted) -> None:
@@ -114,6 +115,7 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("q", "cancel", "Cancel"),
         Binding("d", "delete", "Delete"),
         Binding("a", "add", "Add"),
     ]
@@ -137,10 +139,10 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
                     items.append(ListItem(Label(f"[dim]{e.id}[/] [{ts}] {preview}"), id=f"mem-{i}"))
                 yield ListView(*items)
                 yield Static("", id="preview-text", classes="preview")
-                yield Static("↑↓ navigate • d delete • a add • Esc close", classes="hint")
+                yield Static("↑↓ navigate • d delete • a add • Esc/q close", classes="hint")
             else:
                 yield Static("No memories saved.\nUse 'a' to add or /memory add <text>", classes="empty")
-                yield Static("a add • Esc close", classes="hint")
+                yield Static("a add • Esc/q close", classes="hint")
 
     def on_mount(self) -> None:
         if self.entries:
@@ -183,9 +185,9 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
         try:
             hint = self.query_one(".hint", Static)
             if self._pending_delete:
-                hint.update("[#f7768e]Press d again to confirm delete[/] • Esc cancel")
+                hint.update("[#f7768e]Press d again to confirm delete[/] • Esc/q cancel")
             else:
-                hint.update("↑↓ navigate • d delete • a add • Esc close")
+                hint.update("↑↓ navigate • d delete • a add • Esc/q close")
         except Exception:
             pass
 
@@ -232,6 +234,7 @@ class DiffModal(ModalScreen[bool]):
         Binding("enter", "approve", "Approve"),
         Binding("n", "reject", "Reject"),
         Binding("escape", "reject", "Reject"),
+        Binding("q", "reject", "Reject"),
     ]
 
     def __init__(self, path: str, old_string: str, new_string: str, **kwargs):
@@ -273,7 +276,9 @@ class DiffModal(ModalScreen[bool]):
                 yield Static(Text.from_markup(f"[#565f89]{escape(display_path)}[/]"), classes="filepath")
             yield Static(Text.from_markup(diff_text), classes="diff-view")
             yield Static(
-                Text.from_markup("[#9ece6a]y[/]/[#7aa2f7]Enter[/] approve    [#f7768e]n[/]/[#7aa2f7]Esc[/] reject"),
+                Text.from_markup(
+                    "[#9ece6a]y[/]/[#7aa2f7]Enter[/] approve    [#f7768e]n[/]/[#7aa2f7]Esc[/]/q reject"
+                ),
                 classes="hint",
             )
 

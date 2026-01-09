@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1](https://github.com/dedalus-labs/wingman/compare/v0.4.0...v0.4.1) (2026-01-09)
+
+
+### Bug Fixes
+
+* remote bulletin fetching logic ([bf621c1](https://github.com/dedalus-labs/wingman/commit/bf621c19468c0c4311ab332629a559e4956d4d44))
+
 ## [0.4.0](https://github.com/dedalus-labs/wingman/compare/v0.3.0...v0.4.0) (2026-01-09)
 
 

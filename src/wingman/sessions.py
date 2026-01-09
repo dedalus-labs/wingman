@@ -1,23 +1,23 @@
 """Session storage and persistence."""
 
-import json
 from pathlib import Path
 
 from .config import SESSIONS_DIR
+from .lib import oj
 
 
 def load_sessions() -> dict:
     """Load all sessions metadata."""
     path = SESSIONS_DIR / "sessions.json"
     if path.exists():
-        return json.loads(path.read_text())
+        return oj.loads(path.read_text())
     return {}
 
 
 def save_sessions(sessions: dict) -> None:
     """Save sessions metadata."""
     path = SESSIONS_DIR / "sessions.json"
-    path.write_text(json.dumps(sessions, indent=2))
+    path.write_text(oj.dumps(sessions, indent=2))
 
 
 def get_session(session_id: str) -> list[dict]:

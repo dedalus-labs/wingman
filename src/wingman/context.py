@@ -4,12 +4,63 @@ from dataclasses import dataclass, field
 
 from dedalus_labs import AsyncDedalus
 
-# Approximate context window sizes
+# Context window sizes from https://models.dev/api.json
+# Models not listed here fall back to 128K default
 MODEL_CONTEXT_LIMITS = {
-    "openai/gpt-4.1": 128_000,
+    # OpenAI Chat
+    "openai/gpt-5.2": 400_000,
+    "openai/gpt-5.1": 400_000,
+    "openai/gpt-5": 400_000,
+    "openai/gpt-5-mini": 400_000,
+    "openai/gpt-5-nano": 400_000,
+    "openai/gpt-5-chat-latest": 400_000,
+    "openai/gpt-4.1": 1_047_576,
+    "openai/gpt-4.1-mini": 1_047_576,
+    "openai/gpt-4.1-nano": 1_047_576,
+    "openai/gpt-4o": 128_000,
+    "openai/gpt-4o-2024-05-13": 128_000,
+    "openai/gpt-4o-mini": 128_000,
+    "openai/gpt-4-turbo": 128_000,
+    "openai/gpt-4": 8_192,
+    "openai/gpt-3.5-turbo": 16_385,
+    # OpenAI Reasoning
+    "openai/o1": 200_000,
+    "openai/o3": 200_000,
+    "openai/o3-mini": 200_000,
+    "openai/o4-mini": 200_000,
+    # Anthropic (all 200K)
+    "anthropic/claude-opus-4-5": 200_000,
+    "anthropic/claude-haiku-4-5-20251001": 200_000,
+    "anthropic/claude-sonnet-4-5-20250929": 200_000,
+    "anthropic/claude-opus-4-1-20250805": 200_000,
+    "anthropic/claude-opus-4-20250514": 200_000,
     "anthropic/claude-sonnet-4-20250514": 200_000,
-    "anthropic/claude-opus-4-5-20251101": 200_000,
-    "google/gemini-2.5-pro-preview-06-05": 1_000_000,
+    "anthropic/claude-3-7-sonnet-20250219": 200_000,
+    "anthropic/claude-3-5-haiku-20241022": 200_000,
+    "anthropic/claude-3-haiku-20240307": 200_000,
+    # Google (~1M)
+    "google/gemini-3-pro-preview": 1_000_000,
+    "google/gemini-3-flash-preview": 1_048_576,
+    "google/gemini-2.5-pro": 1_048_576,
+    "google/gemini-2.5-flash": 1_048_576,
+    "google/gemini-2.5-flash-lite": 1_048_576,
+    "google/gemini-2.0-flash": 1_048_576,
+    "google/gemini-2.0-flash-lite": 1_048_576,
+    # xAI
+    "xai/grok-4-1-fast-non-reasoning": 2_000_000,
+    "xai/grok-4-fast-non-reasoning": 2_000_000,
+    "xai/grok-code-fast-1": 256_000,
+    "xai/grok-3": 131_072,
+    "xai/grok-3-mini": 131_072,
+    "xai/grok-2-vision-1212": 8_192,
+    # DeepSeek
+    "deepseek/deepseek-chat": 128_000,
+    "deepseek/deepseek-reasoner": 128_000,
+    # Mistral
+    "mistral/mistral-large-latest": 262_144,
+    "mistral/mistral-medium-latest": 128_000,
+    "mistral/mistral-small-latest": 128_000,
+    "mistral/pixtral-12b": 128_000,
 }
 
 AUTO_COMPACT_THRESHOLD = 0.85
@@ -75,7 +126,7 @@ class ContextManager:
 
     @property
     def usage_percent(self) -> float:
-        return self.total_tokens / self.context_limit
+        return min(1.0, self.total_tokens / self.context_limit)
 
     @property
     def tokens_remaining(self) -> int:
@@ -123,7 +174,7 @@ class ContextManager:
 
         try:
             result = await client.chat.completions.create(
-                model=self.model.split("/")[-1],
+                model=self.model,
                 messages=[{"role": "user", "content": summary_prompt}],
                 max_tokens=2000,
             )

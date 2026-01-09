@@ -3,38 +3,41 @@
 import asyncio
 import re
 import time
+import webbrowser
 from pathlib import Path
 
+from dedalus_labs import AsyncDedalus, DedalusRunner
+from rich.markup import escape
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static, Tree
 
-from dedalus_labs import AsyncDedalus, DedalusRunner
-
 from .checkpoints import get_checkpoint_manager, set_current_session
+from .command_completion import get_hint_candidates
 from .config import (
     APP_CREDIT,
     APP_NAME,
     APP_VERSION,
-    COMMANDS,
     MARKETPLACE_SERVERS,
     MODELS,
     fetch_marketplace_servers,
     load_api_key,
+    load_instructions,
 )
 from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
-from .memory import clear_memory, load_memory, append_memory
-from .sessions import delete_session, get_session, load_sessions, rename_session, save_session, save_session_working_dir
+from .memory import add_entry, clear_all, load_memory
+from .sessions import delete_session, load_sessions, rename_session, save_session, save_session_working_dir
 from .tools import (
     CODING_SYSTEM_PROMPT,
-    create_tools,
     add_text_segment,
+    check_completed_processes,
     clear_segments,
+    create_tools,
     get_background_processes,
     get_pending_edit,
     get_segments,
@@ -63,229 +66,7 @@ class WingmanApp(App):
     TITLE = "Wingman"
     SUB_TITLE = "Your copilot for the terminal"
 
-    CSS = """
-    Screen {
-        background: #1a1b26;
-    }
-
-    /* Sidebar */
-    #sidebar {
-        width: 26;
-        height: 100%;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        border-title-color: #a9b1d6;
-        border-title-style: bold;
-    }
-
-    #sidebar Tree {
-        padding: 1;
-        background: transparent;
-    }
-
-    /* Main area */
-    #main {
-        height: 100%;
-    }
-
-    /* Chat panel */
-    #chat-panel {
-        height: 1fr;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        border-title-color: #a9b1d6;
-        border-title-style: bold;
-    }
-
-    #chat {
-        padding: 1 2;
-        height: auto;
-    }
-
-    /* Welcome message - centered */
-    #welcome {
-        width: 100%;
-        height: auto;
-        content-align: center middle;
-        text-align: center;
-        padding: 4 2;
-    }
-
-    /* Hide scrollbar by default */
-    #chat-panel {
-        scrollbar-size: 0 0;
-    }
-
-    #chat-panel:focus-within {
-        scrollbar-size: 1 1;
-    }
-
-    /* Clean message styling - no blocks */
-    ChatMessage {
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    Thinking {
-        height: auto;
-        margin: 1 0;
-    }
-
-    CommandStatus {
-        height: auto;
-        margin: 1 0;
-    }
-
-    StreamingText {
-        height: auto;
-        margin: 1 0;
-    }
-
-    .loaded-text {
-        height: auto;
-        margin: 1 0;
-    }
-
-    ToolApproval {
-        height: auto;
-        margin: 0 0 1 0;
-        padding: 1 2;
-        background: #1a1b26;
-        border-left: solid #e0af68;
-    }
-
-    ToolApproval:focus {
-        border-left: solid #7aa2f7;
-    }
-
-    ToolApproval #approval-input-row {
-        height: auto;
-        margin-top: 1;
-    }
-
-    ToolApproval #approval-prompt {
-        width: auto;
-        height: 1;
-        padding: 0;
-    }
-
-    ToolApproval #approval-feedback {
-        margin: 0;
-        padding: 0;
-        background: transparent;
-        border: none;
-        height: 1;
-    }
-
-    ToolApproval #approval-feedback:focus {
-        border: none;
-    }
-
-    .hidden {
-        display: none;
-    }
-
-    /* Input area */
-    #input-panel {
-        height: auto;
-        min-height: 4;
-        max-height: 10;
-        background: #1a1b26;
-        border: solid #3b3d4d;
-        border-title-color: #a9b1d6;
-        border-title-style: bold;
-        padding: 1;
-    }
-
-    #prompt {
-        background: #24283b;
-        border: none;
-    }
-
-    #cmd-hint {
-        height: auto;
-        color: #565f89;
-        padding: 0 1;
-    }
-
-    /* Status bar */
-    #status {
-        height: 1;
-        dock: bottom;
-        background: #16161e;
-        color: #565f89;
-        padding: 0 2;
-    }
-
-    /* Split panels container */
-    #panels-container {
-        height: 1fr;
-    }
-
-    /* Individual chat panel */
-    ChatPanel {
-        width: 1fr;
-        height: 100%;
-        border: solid #3b3d4d;
-        background: #1a1b26;
-    }
-
-    ChatPanel.active-panel {
-        border: solid #7aa2f7;
-    }
-
-    .panel-scroll {
-        height: 1fr;
-        scrollbar-size: 0 0;
-    }
-
-    .panel-scroll:focus-within {
-        scrollbar-size: 1 1;
-    }
-
-    .panel-chat {
-        padding: 1 2;
-        height: auto;
-    }
-
-    .panel-welcome {
-        width: 100%;
-        height: auto;
-        content-align: center middle;
-        text-align: center;
-        padding: 2 1;
-    }
-
-    .panel-input {
-        height: auto;
-        min-height: 3;
-        max-height: 8;
-        padding: 0 1 1 1;
-    }
-
-    .panel-prompt {
-        background: #24283b;
-        border: none;
-    }
-
-    .panel-hint {
-        height: auto;
-        color: #565f89;
-        padding: 0 1;
-    }
-
-    .panel-chips {
-        height: auto;
-        width: 100%;
-    }
-
-    ImageChip {
-        height: 1;
-        width: auto;
-        margin: 0 1 0 0;
-    }
-
-    """
+    CSS_PATH = "ui/app.tcss"
 
     BINDINGS = [
         Binding("ctrl+n", "new_session", "New Chat"),
@@ -299,11 +80,7 @@ class WingmanApp(App):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("f1", "help", "Help"),
-        # Split panel controls
-        Binding("ctrl+\\", "split_panel", "Split"),
-        Binding("ctrl+w", "close_panel", "Close Panel"),
-        Binding("ctrl+left", "prev_panel", "Prev Panel", show=False),
-        Binding("ctrl+right", "next_panel", "Next Panel", show=False),
+        Binding("ctrl+/", "help", "Help", show=False),
         Binding("ctrl+1", "goto_panel_1", "Panel 1", show=False),
         Binding("ctrl+2", "goto_panel_2", "Panel 2", show=False),
         Binding("ctrl+3", "goto_panel_3", "Panel 3", show=False),
@@ -313,6 +90,7 @@ class WingmanApp(App):
     def __init__(self):
         super().__init__()
         set_app_instance(self)
+        self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None
         self.runner: DedalusRunner | None = None
         self.model = MODELS[0]
@@ -320,6 +98,7 @@ class WingmanApp(App):
         # Panel management
         self.panels: list[ChatPanel] = []
         self.active_panel_idx: int = 0
+        self.last_ctrl_c: float | None = None
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key."""
@@ -360,6 +139,8 @@ class WingmanApp(App):
             self.push_screen(APIKeyScreen(), self._on_api_key_entered)
         # Fetch marketplace servers in background
         self._init_dynamic_data()
+        # Monitor background processes for completion
+        self.set_interval(2.0, self._check_background_processes)
 
     @work(thread=False)
     async def _init_dynamic_data(self) -> None:
@@ -368,6 +149,17 @@ class WingmanApp(App):
         if servers:
             MARKETPLACE_SERVERS.clear()
             MARKETPLACE_SERVERS.extend(servers)
+
+    def _check_background_processes(self) -> None:
+        """Periodic check for completed background processes."""
+        completed = check_completed_processes()
+        for panel_id, bg_id, exit_code, command in completed:
+            # Shorten command for display
+            cmd_short = command[:40] + "..." if len(command) > 40 else command
+            if exit_code == 0:
+                self.notify(f"[{bg_id}] completed: {cmd_short}", timeout=5.0)
+            else:
+                self.notify(f"[{bg_id}] failed (exit {exit_code}): {cmd_short}", timeout=5.0, severity="error")
 
     def _on_api_key_entered(self, api_key: str | None) -> None:
         """Callback when API key is entered."""
@@ -381,7 +173,7 @@ class WingmanApp(App):
         panel = self.active_panel
         mcp_count = len(panel.mcp_servers) if panel else 0
         mcp_text = f" │ MCP: {mcp_count}" if mcp_count else ""
-        session_text = panel.session_id if panel and panel.session_id else "New Chat"
+        session_text = escape(panel.session_id) if panel and panel.session_id else "New Chat"
 
         # Coding mode indicator
         code_text = " │ [#9ece6a]CODE[/]" if self.coding_mode else ""
@@ -404,7 +196,10 @@ class WingmanApp(App):
         ctx_text = f" │ [bold {ctx_color}]Context: {int(remaining * 100)}%[/]"
 
         # Memory indicator
-        memory_text = " │ [#bb9af7]MEM[/]" if load_memory() else ""
+        memory_text = " │ [#bb9af7]MEM[/]" if load_memory().entries else ""
+
+        # Generating indicator
+        generating_text = " │ [#e0af68]Generating...[/]" if panel and panel._generating else ""
 
         # Panel indicator
         panel_count = len(self.panels)
@@ -416,9 +211,9 @@ class WingmanApp(App):
             cwd_display = f"~/{cwd.relative_to(Path.home())}"
         except ValueError:
             cwd_display = str(cwd)
-        cwd_text = f" │ [dim]{cwd_display}[/]"
+        cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
-        status = f"{session_text} │ {model_short}{code_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
+        status = f"{session_text} │ {model_short}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 
     def _refresh_sessions(self) -> None:
@@ -442,6 +237,12 @@ class WingmanApp(App):
         """Show info in the active panel."""
         if self.active_panel:
             self.active_panel.show_info(text)
+
+    def _open_github_issue(self, template: str) -> None:
+        """Open GitHub issue page with template."""
+        url = f"https://github.com/dedalus-labs/wingman/issues/new?template={template}"
+        webbrowser.open(url)
+        self.notify(f"Opening {template.replace('.yml', '').replace('_', ' ')}...", timeout=2.0)
 
     def _show_context_info(self) -> None:
         """Display detailed context usage information."""
@@ -514,6 +315,35 @@ class WingmanApp(App):
                     self._set_active_panel(i)
                 break
 
+    def on_click(self, event) -> None:
+        """Focus input when clicking anywhere in the main area."""
+        panel = self.active_panel
+        if panel:
+            # Focus the input unless clicking on an interactive element
+            from textual.widgets import Button, Input, ListView
+
+            if not isinstance(event.widget, (Button, Input, ListView, ImageChip, ToolApproval)):
+                # If there's a pending tool approval, focus that instead
+                approvals = list(panel.query("ToolApproval"))
+                if approvals:
+                    approvals[0].focus()
+                else:
+                    panel.get_input().focus()
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Route paste events to the active input if not already focused there."""
+        panel = self.active_panel
+        if not panel:
+            return
+
+        input_widget = panel.get_input()
+        # If paste didn't go to the input (e.g., dropped while unfocused), route it there
+        if self.focused != input_widget and event.text:
+            # Focus the input and manually trigger paste handling
+            input_widget.focus()
+            input_widget._on_paste(event)
+            event.stop()
+
     @on(ImageChip.Removed)
     def on_image_chip_removed(self, event: ImageChip.Removed) -> None:
         """Remove an image when its chip is deleted."""
@@ -551,10 +381,47 @@ class WingmanApp(App):
             chips[event.index + 1].focus()
 
     def on_key(self, event) -> None:
-        """Handle arrow navigation for image chips."""
+        """Handle escape and arrow navigation for image chips."""
+        # Handle escape only when no modal is open
+        if event.key == "escape" and len(self.screen_stack) == 1:
+            panel = self.active_panel
+            if panel and panel._generating:
+                panel._cancel_requested = True
+                panel._generating = False  # Clear immediately
+                self._update_status()
+                # Remove thinking spinners
+                for thinking in panel.query("Thinking"):
+                    try:
+                        thinking.remove()
+                    except Exception:
+                        pass
+                # Remove pending tool approvals
+                for approval in panel.query("ToolApproval"):
+                    try:
+                        approval.remove()
+                    except Exception:
+                        pass
+                self.notify("Generation cancelled", severity="warning", timeout=2)
+                event.stop()
+                event.prevent_default()
+                return
+            elif panel:
+                try:
+                    input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
+                    input_widget.value = ""
+                    if hasattr(input_widget, "_pasted_content"):
+                        input_widget._pasted_content = None
+                        input_widget._paste_placeholder = None
+                except Exception:
+                    pass
+                event.stop()
+                event.prevent_default()
+                return
+
         panel = self.active_panel
         if not panel:
             return
+
         focused = self.focused
 
         # Up from input -> last chip
@@ -597,10 +464,13 @@ class WingmanApp(App):
         text = event.value
 
         # Auto-detect image paths (drag-and-drop)
-        if text and any(
-            text.strip().strip("'\"").lower().endswith(ext)
+        # Check for image extensions in various formats (plain, URL-encoded, backslash-escaped)
+        text_lower = text.strip().strip("'\"").lower() if text else ""
+        has_image_ext = any(
+            text_lower.endswith(ext) or text_lower.endswith(ext.replace(".", "%2e"))
             for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
-        ):
+        )
+        if text and has_image_ext:
             image_path = is_image_path(text)
             if image_path:
                 # Prevent duplicate adds from rapid-fire input events
@@ -617,11 +487,13 @@ class WingmanApp(App):
                     return
 
         if text.startswith("/"):
-            search = text[1:].lower()
-            matches = [
-                f"[#7aa2f7]{cmd}[/]" for cmd, desc in COMMANDS if search in cmd.lower() or search in desc.lower()
-            ]
-            hint.update("  ".join(matches) if matches else "")
+            # Don't overwrite hint if actively cycling through completions for this exact input
+            cycle = getattr(event.input, "_completion_cycle", None)
+            if cycle and cycle.is_active_for(text, event.input.cursor_position):
+                return
+            matches = get_hint_candidates(text, event.input.cursor_position)
+            formatted = "  ".join(f"[#7aa2f7]{cmd}[/]" for cmd in matches)
+            hint.update(formatted if formatted else "")
         elif panel.pending_images:
             hint.update("[dim]↑ to select images · backspace to remove[/]")
         else:
@@ -637,11 +509,18 @@ class WingmanApp(App):
         if not panel:
             return
 
+        # Block input while generating
+        if panel._generating:
+            self.notify("Wait for response to complete", severity="warning", timeout=2)
+            return
+
         # Activate this panel if it's not active
         if panel != self.active_panel:
             self._set_active_panel(self.panels.index(panel))
 
-        text = event.value.strip()
+        text = (
+            event.input.get_submit_value().strip() if hasattr(event.input, "get_submit_value") else event.value.strip()
+        )
 
         if not text and not panel.pending_images:
             return
@@ -678,6 +557,9 @@ class WingmanApp(App):
             panel.add_image_message("user", text, images_to_send)
         else:
             panel.add_message("user", text)
+        
+        # Save session immediately after user message
+        save_session(panel.session_id, panel.messages)
 
         chat = panel.get_chat_container()
         thinking = Thinking(id="thinking")
@@ -701,9 +583,17 @@ class WingmanApp(App):
             messages = []
             for msg in panel.messages:
                 if msg.get("segments"):
-                    # Extract text content from segments
-                    text_parts = [s["content"] for s in msg["segments"] if s.get("type") == "text"]
-                    messages.append({"role": msg["role"], "content": "".join(text_parts)})
+                    # Include both text and tool outputs so model has full context
+                    content_parts = []
+                    for seg in msg["segments"]:
+                        if seg.get("type") == "text":
+                            content_parts.append(seg["content"])
+                        elif seg.get("type") == "tool":
+                            # Include tool results so model knows what it did
+                            cmd = seg.get("command", "")
+                            output = seg.get("output", "")
+                            content_parts.append(f"\n[Tool: {cmd}]\n{output}\n")
+                    messages.append({"role": msg["role"], "content": "".join(content_parts)})
                 else:
                     messages.append(msg.copy())
 
@@ -713,23 +603,28 @@ class WingmanApp(App):
 
             if self.coding_mode:
                 system_content = CODING_SYSTEM_PROMPT.format(cwd=panel.working_dir)
+                # Include custom instructions (global first, then local)
+                instructions = load_instructions(panel.working_dir)
+                if instructions:
+                    system_content += f"\n\n{instructions}"
                 # Include project memory if available
                 memory = load_memory()
-                if memory:
-                    system_content += f"\n\n## Project Memory\n{memory}"
+                if memory.entries:
+                    memory_text = "\n".join(e.content for e in memory.entries)
+                    system_content += f"\n\n## Project Memory\n{memory_text}"
                 system_msg = {"role": "system", "content": system_content}
                 messages = [system_msg] + messages
 
             kwargs = {
                 "messages": messages,
                 "model": self.model,
-                "max_steps": 10,
                 "stream": True,
             }
             if panel.mcp_servers:
                 kwargs["mcp_servers"] = panel.mcp_servers
             if self.coding_mode:
                 kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
+
 
             # Set session context for checkpoint tracking
             set_current_session(panel.session_id)
@@ -740,34 +635,75 @@ class WingmanApp(App):
             widget_id = int(time.time() * 1000)  # Unique base ID per message
 
             panel._generating = True
+            panel._cancel_requested = False
+            was_cancelled = False
+            self._update_status()
             try:
                 stream = self.runner.run(**kwargs)
-                async for chunk in stream:
-                    if hasattr(chunk, "choices") and chunk.choices:
-                        delta = chunk.choices[0].delta
 
-                        # Tool call detected - finalize current text segment
-                        if hasattr(delta, "tool_calls") and delta.tool_calls:
-                            if streaming_widget is not None:
-                                streaming_widget.mark_complete()
-                                streaming_widget = None
+                # Handle both stream manager (event API) and raw iterator
+                # Stream manager has __aenter__ but not __aiter__
+                if hasattr(stream, "__aenter__") and not hasattr(stream, "__aiter__"):
+                    # Event API stream (e.g., Gemini)
+                    async with stream as event_stream:
+                        async for event in event_stream:
+                            if panel._cancel_requested:
+                                was_cancelled = True
+                                break
+                            # Handle content.delta events
+                            if hasattr(event, "type") and event.type == "content.delta":
+                                content = getattr(event, "delta", None)
+                                if content:
+                                    if streaming_widget is None:
+                                        widget_id += 1
+                                        streaming_widget = StreamingText(id=f"streaming-{widget_id}")
+                                        try:
+                                            chat.mount(streaming_widget, before=thinking)
+                                        except Exception:
+                                            # Thinking widget was removed (cancelled)
+                                            was_cancelled = True
+                                            break
+                                    add_text_segment(content, panel.panel_id)
+                                    streaming_widget.append_text(content)
+                                    panel.get_scroll_container().scroll_end(animate=False)
+                                    await asyncio.sleep(0)
+                else:
+                    # Raw chunk iterator (OpenAI-style)
+                    async for chunk in stream:
+                        if panel._cancel_requested:
+                            was_cancelled = True
+                            break
+                        if hasattr(chunk, "choices") and chunk.choices:
+                            delta = chunk.choices[0].delta
 
-                        # Stream text content
-                        if hasattr(delta, "content") and delta.content:
-                            if streaming_widget is None:
-                                widget_id += 1
-                                streaming_widget = StreamingText(id=f"streaming-{widget_id}")
-                                chat.mount(streaming_widget, before=thinking)
-                            add_text_segment(delta.content, panel.panel_id)  # Track text segment
-                            streaming_widget.append_text(delta.content)
-                            panel.get_scroll_container().scroll_end(animate=False)
-                            await asyncio.sleep(0)
+                            # Tool call detected - finalize current text segment
+                            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                                if streaming_widget is not None:
+                                    streaming_widget.mark_complete()
+                                    streaming_widget = None
+
+                            # Stream text content
+                            if hasattr(delta, "content") and delta.content:
+                                if streaming_widget is None:
+                                    widget_id += 1
+                                    streaming_widget = StreamingText(id=f"streaming-{widget_id}")
+                                    try:
+                                        chat.mount(streaming_widget, before=thinking)
+                                    except Exception:
+                                        # Thinking widget was removed (cancelled)
+                                        was_cancelled = True
+                                        break
+                                add_text_segment(delta.content, panel.panel_id)
+                                streaming_widget.append_text(delta.content)
+                                panel.get_scroll_container().scroll_end(animate=False)
+                                await asyncio.sleep(0)
             finally:
                 panel._generating = False
                 set_current_session(None)
 
             if streaming_widget is not None:
                 streaming_widget.mark_complete()
+            self._update_status()
 
             try:
                 thinking.remove()
@@ -778,8 +714,7 @@ class WingmanApp(App):
             if segments:
                 panel.messages.append({"role": "assistant", "segments": segments})
                 save_session(panel.session_id, panel.messages)
-            else:
-                # Stream ended with no content
+            elif not was_cancelled:
                 self._show_info("[#e0af68]Response ended with no content[/]")
 
             self._update_status()
@@ -795,9 +730,15 @@ class WingmanApp(App):
                     sw.remove()
                 except Exception:
                     pass
-            # Remove the failed user message from history to prevent resending
-            if panel.messages and panel.messages[-1].get("role") == "user":
-                panel.messages.pop()
+            # Save any partial segments before showing error
+            segments = get_segments(panel.panel_id)
+            if segments:
+                panel.messages.append({"role": "assistant", "segments": segments})
+                save_session(panel.session_id, panel.messages)
+            else:
+                # Only remove user message if there was no assistant response at all
+                if panel.messages and panel.messages[-1].get("role") == "user":
+                    panel.messages.pop()
             self._show_info("[#f7768e]Request timed out[/]")
 
         except Exception as e:
@@ -812,14 +753,21 @@ class WingmanApp(App):
                     sw.remove()
                 except Exception:
                     pass
+            # Save any partial segments before handling error
+            segments = get_segments(panel.panel_id)
+            if segments:
+                panel.messages.append({"role": "assistant", "segments": segments})
+                save_session(panel.session_id, panel.messages)
+            else:
+                # Only remove user message if there was no assistant response at all
+                if panel.messages and panel.messages[-1].get("role") == "user":
+                    panel.messages.pop()
             error_msg = str(e)
-            # Remove the failed user message from history to prevent resending
-            if panel.messages and panel.messages[-1].get("role") == "user":
-                panel.messages.pop()
             if "timeout" in error_msg.lower():
                 self._show_info("[#f7768e]Request timed out[/]")
-            else:
-                panel.add_message("assistant", f"[#f7768e]Error: {e}[/]")
+            elif "cancelled" not in error_msg.lower():
+                # Don't show error for cancellations, and don't use Rich markup
+                panel.add_message("assistant", f"Error: {error_msg}")
 
     def show_diff_approval(self) -> None:
         """Show diff modal for pending edit approval. Called from tool thread."""
@@ -846,22 +794,97 @@ class WingmanApp(App):
             return ("yes", "")
         chat = panel.get_chat_container()
         widget = ToolApproval(tool_name, command, id=f"tool-approval-{panel_id or 'default'}")
-        # Mount before thinking spinner (search within this panel's chat only)
+        # Mount before thinking spinner and hide spinner while awaiting approval
+        thinking = None
         try:
             thinking = chat.query_one(Thinking)
+            thinking.display = False
             chat.mount(widget, before=thinking)
         except Exception:
             chat.mount(widget)
         panel.get_scroll_container().scroll_end(animate=False)
+        widget.focus()
+        # Wait for widget to mount first
+        while not widget.is_mounted:
+            await asyncio.sleep(0.01)
+        # Now wait for result or cancellation
         while widget.result is None:
+            if not widget.is_mounted or panel._cancel_requested:
+                return ("cancelled", "")
             await asyncio.sleep(0.05)
         result = widget.result
-        widget.remove()
+        try:
+            widget.remove()
+        except Exception:
+            pass  # Already removed
+        # Restore thinking spinner
+        if thinking:
+            thinking.display = True
         return result
+
+    def action_quit(self) -> None:
+        """Quit the app, or clear input if text present (double-tap to force exit)."""
+        panel = self.active_panel
+        if panel:
+            try:
+                input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
+                if input_widget.value:
+                    # Clear input instead of exiting
+                    input_widget.value = ""
+                    if hasattr(input_widget, "_pasted_content"):
+                        input_widget._pasted_content = None
+                    self.last_ctrl_c = None
+                    return
+            except Exception:
+                pass
+
+        # Double-tap detection (within 1 second)
+        now = time.time()
+        if self.last_ctrl_c and (now - self.last_ctrl_c) < 1.0:
+            self.exit()
+        else:
+            self.last_ctrl_c = now
+            if len(self.panels) > 1:
+                self.notify("/close to close panel, Ctrl+C to quit", severity="warning", timeout=2.0)
+            else:
+                self.notify("Press Ctrl+C again to quit", severity="warning", timeout=1.5)
+
+    def action_stop_generation(self) -> None:
+        """Stop generation if active, otherwise clear input."""
+        panel = self.active_panel
+        if panel and panel._generating:
+            panel._cancel_requested = True
+            panel._generating = False  # Clear immediately
+            self._update_status()
+            # Remove thinking spinners
+            for thinking in panel.query("Thinking"):
+                try:
+                    thinking.remove()
+                except Exception:
+                    pass
+            # Remove pending tool approvals
+            for approval in panel.query("ToolApproval"):
+                try:
+                    approval.remove()
+                except Exception:
+                    pass
+            self.notify("Generation cancelled", severity="warning", timeout=2)
+        elif panel:
+            # Clear the input if not generating
+            try:
+                input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
+                input_widget.value = ""
+                if hasattr(input_widget, "_pasted_content"):
+                    input_widget._pasted_content = None
+                    input_widget._paste_placeholder = None
+            except Exception:
+                pass
 
     def action_background(self) -> None:
         """Request backgrounding of current command (Ctrl+B)."""
-        request_background()
+        panel = self.active_panel
+        if panel:
+            request_background(panel.panel_id)
 
     def action_toggle_sidebar(self) -> None:
         """Toggle sidebar visibility."""
@@ -882,7 +905,7 @@ class WingmanApp(App):
         self._update_status()
 
     def action_split_panel(self) -> None:
-        """Create a new panel (Ctrl+\\)."""
+        """Create a new panel (/split)."""
         if len(self.panels) >= 4:
             self._show_info("Maximum 4 panels allowed")
             return
@@ -915,10 +938,22 @@ class WingmanApp(App):
         """Handle terminal resize - refresh welcome art."""
         self.call_after_refresh(self._refresh_welcome_art)
 
+    def on_chat_panel_clicked(self, event: ChatPanel.Clicked) -> None:
+        """Switch focus to clicked panel."""
+        try:
+            idx = self.panels.index(event.panel)
+            if idx != self.active_panel_idx:
+                self.panels[self.active_panel_idx].set_active(False)
+                self.active_panel_idx = idx
+                event.panel.set_active(True)
+                self._update_status()
+        except ValueError:
+            pass
+
     def action_close_panel(self) -> None:
-        """Close the active panel (Ctrl+W)."""
+        """Close the active panel (/close)."""
         if len(self.panels) <= 1:
-            self._show_info("Cannot close the last panel")
+            self._show_info("Cannot close the last panel. Use Ctrl+C to quit.")
             return
         panel = self.active_panel
         if not panel:
@@ -937,14 +972,14 @@ class WingmanApp(App):
         self._update_status()
 
     def action_prev_panel(self) -> None:
-        """Switch to previous panel (Ctrl+Left)."""
+        """Switch to previous panel."""
         if len(self.panels) <= 1:
             return
         new_idx = (self.active_panel_idx - 1) % len(self.panels)
         self._set_active_panel(new_idx)
 
     def action_next_panel(self) -> None:
-        """Switch to next panel (Ctrl+Right)."""
+        """Switch to next panel."""
         if len(self.panels) <= 1:
             return
         new_idx = (self.active_panel_idx + 1) % len(self.panels)
@@ -1000,6 +1035,24 @@ class WingmanApp(App):
         except Exception:
             pass
 
+    def _update_thinking_status(self, status: str | None, panel_id: str | None = None) -> None:
+        """Update the Thinking spinner with current tool status."""
+        panel = None
+        if panel_id:
+            for p in self.panels:
+                if p.panel_id == panel_id:
+                    panel = p
+                    break
+        if not panel:
+            panel = self.active_panel
+        if not panel:
+            return
+        try:
+            thinking = panel.get_chat_container().query_one(Thinking)
+            thinking.set_status(status)
+        except Exception:
+            pass
+
     @work
     async def _show_diff_modal(self, path: str, old_string: str, new_string: str) -> None:
         """Display diff modal and handle approval."""
@@ -1029,6 +1082,17 @@ class WingmanApp(App):
         if not panel:
             return
         session_id = arg.strip() if arg else panel.session_id
+        # Fall back to highlighted session in sidebar (but not the root node)
+        if not session_id:
+            try:
+                tree = self.query_one("#sessions", Tree)
+                if tree.cursor_node and tree.cursor_node != tree.root:
+                    if tree.cursor_node.data:
+                        session_id = str(tree.cursor_node.data)
+                    else:
+                        session_id = str(tree.cursor_node.label)
+            except Exception:
+                pass
         if not session_id:
             self._show_info("No session to delete")
             return
@@ -1047,15 +1111,45 @@ class WingmanApp(App):
         if not panel:
             return
         if not arg:
-            self.action_add_mcp()
+            self._show_mcp_modal()
         elif arg == "clear":
             panel.mcp_servers = []
             self._show_info("Cleared all MCP servers")
             self._update_status()
         else:
-            panel.mcp_servers.append(arg)
-            self._show_info(f"Added MCP server: {arg}")
-            self._update_status()
+            # Direct add: /mcp <server-url>
+            if arg in panel.mcp_servers:
+                self._show_info(f"MCP server already added: {arg}")
+            else:
+                panel.mcp_servers.append(arg)
+                self._show_info(f"Added MCP server: {arg}")
+                self._update_status()
+
+    def _show_mcp_modal(self) -> None:
+        from .ui.modals import MCPModal
+
+        panel = self.active_panel
+        if not panel:
+            return
+        self.push_screen(MCPModal(panel.mcp_servers.copy()), self._on_mcp_action)
+
+    def _on_mcp_action(self, result: tuple[str, str | None] | None) -> None:
+        if not result:
+            return
+        panel = self.active_panel
+        if not panel:
+            return
+        action, server = result
+        if action == "delete" and server:
+            if server in panel.mcp_servers:
+                panel.mcp_servers.remove(server)
+                self.notify(f"Removed: {server}", timeout=2.0)
+                self._update_status()
+            # Reopen modal with updated list
+            if panel.mcp_servers:
+                self._show_mcp_modal()
+        elif action == "add":
+            self.action_add_mcp()
 
     def _cmd_code(self, arg: str) -> None:
         self.coding_mode = not self.coding_mode
@@ -1147,24 +1241,85 @@ class WingmanApp(App):
             self._show_info("\n".join(lines))
 
     def _cmd_memory(self, arg: str) -> None:
-        if not arg:
+        from .memory import delete_entries
+        from .ui.modals import MemoryModal
+
+        if not arg or arg == "list":
+            # Open memory browser modal
             memory = load_memory()
-            if memory:
-                self._show_info(f"[bold #7aa2f7]Project Memory[/]\n\n{memory}")
-            else:
-                self._show_info("[dim]No project memory set. Use /memory add <text> to add notes.[/]")
+            self.push_screen(MemoryModal(memory.entries), self._on_memory_action)
         elif arg == "clear":
-            clear_memory()
-            self._show_info("[#9ece6a]Project memory cleared[/]")
+            clear_all()
+            self._show_info("[#9ece6a]All memories cleared[/]")
         elif arg.startswith("add "):
             text = arg[4:].strip()
             if text:
-                append_memory(text)
-                self._show_info(f"[#9ece6a]Added to memory:[/] {text[:50]}...")
+                entry = add_entry(text)
+                self._show_info(f"[#9ece6a]Added memory {entry.id}:[/] {text[:50]}{'...' if len(text) > 50 else ''}")
             else:
                 self._show_info("Usage: /memory add <text>")
+        elif arg.startswith("delete "):
+            ids = arg[7:].split()
+            if ids:
+                n = delete_entries(ids)
+                self._show_info(f"[#9ece6a]Deleted {n} memories[/]")
+            else:
+                self._show_info("Usage: /memory delete <id>")
+        elif arg == "help":
+            self._show_memory_help()
         else:
-            self._show_info("Usage: /memory, /memory add <text>, /memory clear")
+            self._show_memory_help()
+
+    def _show_memory_help(self) -> None:
+        help_text = """[bold #7aa2f7]Memory Commands[/]
+
+[#7aa2f7]/memory[/]             Open memory browser
+[#7aa2f7]/memory add[/] <text>  Add a note
+[#7aa2f7]/memory clear[/]       Clear all memories
+
+[bold #a9b1d6]In Browser[/]
+  ↑↓   Navigate
+  d    Delete highlighted
+  a    Add new memory
+  Esc  Close
+
+[bold #a9b1d6]What is Memory?[/]
+Project-specific notes injected into the AI context.
+Useful for: API patterns, file locations, conventions.
+
+[dim]Stored in ~/.wingman/memory/ per working directory.[/]"""
+        self._show_info(help_text)
+
+    def _on_memory_action(self, result: tuple[str, str | None] | None) -> None:
+        if not result:
+            return
+        action, entry_id = result
+        if action == "delete" and entry_id:
+            from .memory import delete_entries
+
+            n = delete_entries([entry_id])
+            if n:
+                self.notify(f"Deleted memory {entry_id}", timeout=2.0)
+                # Reopen modal with updated list
+                memory = load_memory()
+                if memory.entries:
+                    from .ui.modals import MemoryModal
+
+                    self.push_screen(MemoryModal(memory.entries), self._on_memory_action)
+        elif action == "add":
+            from .ui.modals import InputModal
+
+            self.push_screen(InputModal("Add Memory", "Enter note:"), self._on_memory_add)
+
+    def _on_memory_add(self, text: str | None) -> None:
+        if text and text.strip():
+            entry = add_entry(text.strip())
+            self.notify(f"Added memory {entry.id}", timeout=2.0)
+            # Reopen modal
+            memory = load_memory()
+            from .ui.modals import MemoryModal
+
+            self.push_screen(MemoryModal(memory.entries), self._on_memory_action)
 
     def _cmd_export(self, arg: str) -> None:
         panel = self.active_panel
@@ -1224,6 +1379,7 @@ class WingmanApp(App):
             "clear": lambda: self.action_clear_chat(),
             "help": lambda: self.action_help(),
             "quit": lambda: self.exit(),
+            "exit": lambda: self.exit(),
             "ls": lambda: self._do_ls(arg or "*", self.active_panel.working_dir if self.active_panel else Path.cwd()),
             "ps": lambda: self._show_info(
                 f"[bold #7aa2f7]Background Processes[/]\n{list_processes(self.active_panel.panel_id if self.active_panel else None)}"
@@ -1236,6 +1392,8 @@ class WingmanApp(App):
                 if arg
                 else "Usage: /kill <process_id>"
             ),
+            "bug": lambda: self._open_github_issue("bug_report.yml"),
+            "feature": lambda: self._open_github_issue("feature_request.yml"),
         }
 
         # Commands with complex logic
@@ -1309,6 +1467,10 @@ class WingmanApp(App):
                 panel.context.model = result
             self._show_info(f"Model: {result}")
             self._update_status()
+            # Warn if new model has smaller context and needs compacting
+            panel = self.active_panel
+            if panel and panel.context.needs_compacting:
+                self.notify("Context exceeds model limit. Run /compact", severity="warning")
 
     @work
     async def action_add_mcp(self) -> None:
@@ -1330,16 +1492,22 @@ class WingmanApp(App):
                     InputModal("Add MCP Server", placeholder="Enter server URL or slug...")
                 )
                 if custom:
-                    panel.mcp_servers.append(custom)
-                    self._show_info(f"Added MCP server: {custom}")
-                    self._update_status()
+                    if custom in panel.mcp_servers:
+                        self._show_info(f"MCP server already added: {custom}")
+                    else:
+                        panel.mcp_servers.append(custom)
+                        self._show_info(f"Added MCP server: {custom}")
+                        self._update_status()
             else:
                 match = re.search(r"\(([^)]+)\)$", result)
                 if match:
                     slug = match.group(1)
-                    panel.mcp_servers.append(slug)
-                    self._show_info(f"Added MCP server: {slug}")
-                    self._update_status()
+                    if slug in panel.mcp_servers:
+                        self._show_info(f"MCP server already added: {slug}")
+                    else:
+                        panel.mcp_servers.append(slug)
+                        self._show_info(f"Added MCP server: {slug}")
+                        self._update_status()
 
     def action_clear_chat(self) -> None:
         """Clear chat in the active panel."""
@@ -1369,9 +1537,9 @@ class WingmanApp(App):
             self._show_info("[#f7768e]Failed to restore checkpoint[/]")
 
     def action_help(self) -> None:
-        bg_count = len(get_background_processes())
-        cp_count = len(get_checkpoint_manager()._checkpoints)
         panel = self.active_panel
+        bg_count = len(get_background_processes(panel.panel_id if panel else None))
+        cp_count = len(get_checkpoint_manager()._checkpoints)
         img_count = len(panel.pending_images) if panel else 0
         panel_count = len(self.panels)
         help_text = f"""[bold #7aa2f7]{APP_NAME}[/] [dim]v{APP_VERSION} · {APP_CREDIT}[/]
@@ -1384,9 +1552,6 @@ class WingmanApp(App):
 [bold #a9b1d6]Panels[/]
   [#7aa2f7]/split[/]          Split into new panel
   [#7aa2f7]/close[/]          Close current panel
-  [#7aa2f7]Ctrl+\\[/]         Split panel
-  [#7aa2f7]Ctrl+W[/]          Close panel
-  [#7aa2f7]Ctrl+←/→[/]        Switch panels
   [#7aa2f7]Ctrl+1-4[/]        Jump to panel
 
 [bold #a9b1d6]Coding[/]
@@ -1399,12 +1564,12 @@ class WingmanApp(App):
 [bold #a9b1d6]Rollback[/]
   [#7aa2f7]/history[/]        List checkpoints
   [#7aa2f7]/rollback <id>[/]  Restore from checkpoint
-  [#7aa2f7]/diff [id][/]      Show changes since checkpoint
+  [#7aa2f7]/diff[/] [dim]\\[id][/]  Show changes since checkpoint
 
 [bold #a9b1d6]Memory[/]
-  [#7aa2f7]/memory[/]         View project memory
-  [#7aa2f7]/memory add[/]     Add note to memory
-  [#7aa2f7]/memory clear[/]   Clear memory
+  [#7aa2f7]/memory[/]         Open memory browser (TUI)
+  [#7aa2f7]/memory add[/]     Add note
+  [#7aa2f7]/memory help[/]    Show memory help
 
 [bold #a9b1d6]Export/Import[/]
   [#7aa2f7]/export[/]         Export session to markdown
@@ -1415,9 +1580,17 @@ class WingmanApp(App):
   [#7aa2f7]/model[/]          Switch model
   [#7aa2f7]/context[/]        Show context usage
 
+[bold #a9b1d6]App[/]
+  [#7aa2f7]/exit[/]           Quit Wingman
+
+[bold #a9b1d6]Feedback[/]
+  [#7aa2f7]/bug[/]            Report a bug
+  [#7aa2f7]/feature[/]        Request a feature
+
 [bold #a9b1d6]Shortcuts[/]
-  [#7aa2f7]Ctrl+Z[/]  Undo (restore last checkpoint)
-  [#7aa2f7]Ctrl+B[/]  Background running command
+  [#7aa2f7]F1[/] or [#7aa2f7]Ctrl+/[/]  This help
+  [#7aa2f7]Ctrl+Z[/]          Undo (restore last checkpoint)
+  [#7aa2f7]Ctrl+B[/]          Background running command
 
 [dim]Working dir: {panel.working_dir if panel else Path.cwd()}[/]
 [dim]Panels: {panel_count} · Background: {bg_count} · Checkpoints: {cp_count} · Images: {img_count}[/]"""
@@ -1425,6 +1598,48 @@ class WingmanApp(App):
 
 
 def main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="wingman", description="Wingman - AI coding assistant for the terminal")
+    parser.add_argument(
+        "-p",
+        "--print",
+        dest="prompt",
+        metavar="PROMPT",
+        help="Run in headless mode with the given prompt (non-interactive)",
+    )
+    parser.add_argument("-m", "--model", help="Model to use (e.g., anthropic/claude-sonnet-4-20250514)")
+    parser.add_argument("--verbose", action="store_true", help="Print verbose output in headless mode")
+    parser.add_argument(
+        "--allowed-tools", help="Comma-separated list of allowed tools (e.g., read_file,write_file,run_command)"
+    )
+    parser.add_argument("-C", "--working-dir", help="Working directory for file operations")
+
+    args = parser.parse_args()
+
+    # Headless mode
+    if args.prompt:
+        import asyncio
+        from pathlib import Path
+
+        from .headless import run_headless
+
+        working_dir = Path(args.working_dir) if args.working_dir else None
+        allowed_tools = args.allowed_tools.split(",") if args.allowed_tools else None
+
+        exit_code = asyncio.run(
+            run_headless(
+                prompt=args.prompt,
+                model=args.model,
+                working_dir=working_dir,
+                allowed_tools=allowed_tools,
+                verbose=args.verbose,
+            )
+        )
+        sys.exit(exit_code)
+
+    # Interactive TUI mode
     app = WingmanApp()
     app.run()
 

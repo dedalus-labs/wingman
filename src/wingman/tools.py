@@ -1,7 +1,6 @@
 """File and shell tools for coding assistance."""
 
 import asyncio
-import re
 import select
 import subprocess
 import threading
@@ -11,6 +10,35 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoints import get_checkpoint_manager, get_current_session
+
+# Filesystem traversal limits
+IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".idea",
+        ".cache",
+        "dist",
+        "build",
+        ".next",
+        ".nuxt",
+        "coverage",
+        ".tox",
+        ".eggs",
+        ".mypy_cache",
+        ".pytest_cache",
+    }
+)
+MAX_FILES_TO_SCAN = 5000
+MAX_FILE_SIZE = 1_000_000
+MAX_LIST_RESULTS = 100
+MAX_SEARCH_RESULTS = 50
+CONTENT_TRUNCATE_LIMIT = 8000
+DEFAULT_READ_LINES = 2000
+MAX_LINE_LENGTH = 2000
 
 # App instance reference (set by app module, avoids circular import)
 _app_instance: Any = None
@@ -51,6 +79,8 @@ async def request_tool_approval(tool_name: str, command: str, panel_id: str | No
     if _app_instance is None:
         return (True, "")
     result, feedback = await _app_instance.request_tool_approval(tool_name, command, panel_id)
+    if result == "cancelled":
+        return (False, "Operation cancelled")
     if result == "always":
         if panel_id:
             if panel_id not in _panel_allowed_tools:
@@ -71,6 +101,7 @@ class BackgroundProcess:
     process: subprocess.Popen
     output_buffer: list[str] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
+    notified: bool = False  # Whether completion notification was shown
 
     def read_output(self) -> None:
         if not self.process.stdout:
@@ -102,7 +133,7 @@ class BackgroundProcess:
 # Background processes per panel
 _panel_background_processes: dict[str, dict[str, BackgroundProcess]] = {}
 _next_bg_id: int = 1
-_background_requested: bool = False
+_background_requested: dict[str, bool] = {}  # Per-panel background request flags
 _command_widget_counter: int = 0
 
 # Track segments (text + tool calls) per panel for session persistence
@@ -112,13 +143,28 @@ _panel_segments: dict[str, list[dict]] = {}
 def _notify_mount(command: str, widget_id: str, panel_id: str | None = None) -> None:
     """Mount command status widget via app (thread-safe)."""
     if _app_instance is not None:
-        _app_instance.call_from_thread(_app_instance._mount_command_status, command, widget_id, panel_id)
+        if threading.current_thread() == threading.main_thread():
+            _app_instance._mount_command_status(command, widget_id, panel_id)
+        else:
+            _app_instance.call_from_thread(_app_instance._mount_command_status, command, widget_id, panel_id)
 
 
 def _notify_status(widget_id: str, status: str, output: str | None = None, panel_id: str | None = None) -> None:
     """Update command status via app (thread-safe)."""
     if _app_instance is not None:
-        _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, status, output, panel_id)
+        if threading.current_thread() == threading.main_thread():
+            _app_instance._update_command_status(widget_id, status, output, panel_id)
+        else:
+            _app_instance.call_from_thread(_app_instance._update_command_status, widget_id, status, output, panel_id)
+
+
+def _update_thinking(status: str | None, panel_id: str | None = None) -> None:
+    """Update the Thinking spinner status (thread-safe)."""
+    if _app_instance is not None:
+        if threading.current_thread() == threading.main_thread():
+            _app_instance._update_thinking_status(status, panel_id)
+        else:
+            _app_instance.call_from_thread(_app_instance._update_thinking_status, status, panel_id)
 
 
 def get_segments(panel_id: str | None = None) -> list[dict]:
@@ -163,10 +209,10 @@ def _track_tool_call(command: str, output: str, status: str, panel_id: str | Non
     )
 
 
-def request_background() -> None:
+def request_background(panel_id: str | None = None) -> None:
     """Called when user presses Ctrl+B to background current command."""
-    global _background_requested
-    _background_requested = True
+    if panel_id:
+        _background_requested[panel_id] = True
 
 
 def get_background_processes(panel_id: str | None = None) -> dict[str, BackgroundProcess]:
@@ -174,6 +220,22 @@ def get_background_processes(panel_id: str | None = None) -> dict[str, Backgroun
     if not panel_id:
         return {}
     return _panel_background_processes.get(panel_id, {})
+
+
+def check_completed_processes() -> list[tuple[str, str, int, str]]:
+    """Check for completed background processes that haven't been notified.
+
+    Returns list of (panel_id, bg_id, exit_code, command) for newly completed processes.
+    """
+    completed = []
+    for panel_id, processes in _panel_background_processes.items():
+        for bg_id, proc in processes.items():
+            if not proc.is_running() and not proc.notified:
+                proc.notified = True
+                proc.read_output()  # Capture final output
+                exit_code = proc.process.returncode or 0
+                completed.append((panel_id, bg_id, exit_code, proc.command))
+    return completed
 
 
 async def _show_command_widget(command: str, panel_id: str | None = None) -> str:
@@ -194,8 +256,10 @@ async def _update_command_status(
         await asyncio.sleep(0)
 
 
-def _read_file_impl(path: str, working_dir: Path, panel_id: str | None = None) -> str:
-    """Read the contents of a file."""
+def _read_file_impl(
+    path: str, working_dir: Path, panel_id: str | None = None, offset: int | None = None, limit: int | None = None
+) -> str:
+    """Read file contents with optional line range."""
     global _command_widget_counter
     file_path = Path(path)
     if not file_path.is_absolute():
@@ -220,11 +284,36 @@ def _read_file_impl(path: str, working_dir: Path, panel_id: str | None = None) -
         return output
     try:
         content = file_path.read_text()
-        lines = content.split("\n")
-        numbered = "\n".join(f"{i + 1:4}│ {line}" for i, line in enumerate(lines))
-        output_preview = f"{len(lines)} lines"
+        all_lines = content.split("\n")
+        total_lines = len(all_lines)
+
+        # Apply offset and limit (1-indexed like line numbers)
+        start = (offset - 1) if offset and offset > 0 else 0
+        end = (start + limit) if limit else (start + DEFAULT_READ_LINES)
+        lines = all_lines[start:end]
+
+        # Truncate long lines and format with line numbers
+        formatted = []
+        for i, line in enumerate(lines, start=start + 1):
+            if len(line) > MAX_LINE_LENGTH:
+                line = line[:MAX_LINE_LENGTH] + "..."
+            formatted.append(f"{i:4}│ {line}")
+        numbered = "\n".join(formatted)
+
+        # Add truncation notice if applicable
+        lines_shown = len(lines)
+        was_truncated = end < total_lines
+        if was_truncated:
+            numbered += f"\n\n[Showing lines {start + 1}-{start + lines_shown} of {total_lines}. Use offset/limit to read more.]"
+
+        output_preview = f"{lines_shown}/{total_lines} lines" if was_truncated else f"{total_lines} lines"
         _notify_status(widget_id, "success", output_preview, panel_id)
-        _track_tool_call(command, output_preview, "success", panel_id)
+        tracked = (
+            numbered
+            if len(numbered) < CONTENT_TRUNCATE_LIMIT
+            else numbered[:CONTENT_TRUNCATE_LIMIT] + "\n...[truncated]"
+        )
+        _track_tool_call(command, tracked, "success", panel_id)
         return numbered
     except (OSError, UnicodeDecodeError) as e:
         output = f"Error reading file: {e}"
@@ -298,15 +387,9 @@ def _edit_file_impl(
     try:
         content = file_path.read_text()
         if old_string not in content:
-            output = f"Error: old_string not found in {file_path}. Read the file first to see exact content."
-            _notify_status(widget_id, "error", panel_id=panel_id)
-            _track_tool_call(command, output, "error", panel_id)
-            return output
-        if content.count(old_string) > 1:
-            output = f"Error: old_string appears multiple times. Be more specific."
-            _notify_status(widget_id, "error", panel_id=panel_id)
-            _track_tool_call(command, output, "error", panel_id)
-            return output
+            _notify_status(widget_id, "error", "failed", panel_id)
+            _track_tool_call(command, "failed", "error", panel_id)
+            return "Edit failed - text not found. Re-read the file and try again."
 
         # Request user approval via diff modal
         if _app_instance is not None:
@@ -320,8 +403,8 @@ def _edit_file_impl(
             _edit_approval_event.wait()
 
             if not _edit_approval_result:
-                output = f"Edit rejected by user: {path}"
-                _notify_status(widget_id, "error", panel_id=panel_id)
+                output = "Edit rejected by user. STOP and ask what they want instead."
+                _notify_status(widget_id, "error", "rejected", panel_id)
                 _track_tool_call(command, output, "error", panel_id)
                 return output
 
@@ -343,39 +426,98 @@ def _edit_file_impl(
         return output
 
 
+_tool_cache: dict[str, bool] = {}
+
+
+def _has_fd() -> bool:
+    """Check if fd is available (cached)."""
+    if "fd" not in _tool_cache:
+        try:
+            subprocess.run(["fd", "--version"], capture_output=True, timeout=2)
+            _tool_cache["fd"] = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            _tool_cache["fd"] = False
+    return _tool_cache["fd"]
+
+
+def _has_ripgrep() -> bool:
+    """Check if ripgrep is available (cached)."""
+    if "rg" not in _tool_cache:
+        try:
+            subprocess.run(["rg", "--version"], capture_output=True, timeout=2)
+            _tool_cache["rg"] = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            _tool_cache["rg"] = False
+    return _tool_cache["rg"]
+
+
 def _list_files_sync(pattern: str, base: Path, working_dir: Path) -> list[str]:
-    """Synchronous file listing - runs in thread pool."""
-    ignore = {
-        ".git",
-        "node_modules",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".idea",
-        ".cache",
-        "dist",
-        "build",
-        ".next",
-        ".nuxt",
-        "coverage",
-    }
-    results = []
-    max_files = 5000
-    checked = 0
-    for p in base.glob(pattern):
-        checked += 1
-        if checked > max_files:
-            break
-        if p.is_file() and not any(part in ignore for part in p.parts):
-            results.append(str(p.relative_to(working_dir)))
-            if len(results) >= 100:
-                break
-    return sorted(results)
+    """List files using fd (preferred) or find (fallback)."""
+    fd_result = _try_fd(pattern, base, working_dir)
+    if fd_result is not None:
+        return fd_result
+    return _list_with_find(pattern, base, working_dir)
+
+
+def _try_fd(pattern: str, base: Path, working_dir: Path) -> list[str] | None:
+    """List files with fd. Returns None if fd not installed."""
+    cmd = ["fd", "--type", "f", "--max-results", str(MAX_LIST_RESULTS)]
+    if pattern == "**/*":
+        pass
+    elif pattern.startswith("**/*."):
+        ext = pattern.split(".")[-1]
+        cmd.extend(["-e", ext])
+    elif "*" in pattern:
+        cmd.extend(["-g", pattern.replace("**/", "")])
+    else:
+        cmd.extend(["-g", pattern])
+    cmd.append(str(base))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=working_dir)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            return sorted(lines[:MAX_LIST_RESULTS])
+        return None
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def _list_with_find(pattern: str, base: Path, working_dir: Path) -> list[str]:
+    """List files with find (available on all Unix systems)."""
+    cmd = ["find", str(base), "-type", "f"]
+    if pattern == "**/*":
+        pass
+    elif pattern.startswith("**/"):
+        name_pattern = pattern.replace("**/", "")
+        cmd.extend(["-name", name_pattern])
+    elif "*" in pattern:
+        cmd.extend(["-name", pattern])
+    else:
+        cmd.extend(["-name", pattern])
+    for ignored in IGNORED_DIRS:
+        cmd.extend(["-not", "-path", f"*/{ignored}/*"])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=working_dir)
+        if result.stdout:
+            lines = result.stdout.strip().split("\n")
+            rel_paths = []
+            for line in lines:
+                try:
+                    rel_paths.append(str(Path(line).relative_to(working_dir)))
+                except ValueError:
+                    rel_paths.append(line)
+            return sorted(rel_paths[:MAX_LIST_RESULTS])
+        return []
+    except subprocess.TimeoutExpired:
+        return []
 
 
 async def _list_files_impl(pattern: str, path: str, working_dir: Path, panel_id: str | None = None) -> str:
     """List files matching a glob pattern."""
-    command = f"ls {pattern}"
+    tool = "fd" if _has_fd() else "find"
+    command = f"{tool} {pattern}"
     widget_id = await _show_command_widget(command, panel_id)
     base = Path(path)
     if not base.is_absolute():
@@ -398,69 +540,63 @@ async def _list_files_impl(pattern: str, path: str, working_dir: Path, panel_id:
         return f"Error listing files: {e}"
 
 
-def _search_files_sync(pattern: str, base: Path, file_pattern: str, working_dir: Path) -> list[str]:
-    """Synchronous file search - runs in thread pool."""
-    regex = re.compile(pattern, re.IGNORECASE)
-    results = []
-    ignore = {
-        ".git",
-        "node_modules",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".cache",
-        "dist",
-        "build",
-        ".next",
-        ".nuxt",
-        "coverage",
-        ".tox",
-        ".eggs",
-        "*.egg-info",
-        ".mypy_cache",
-        ".pytest_cache",
-    }
-    max_file_size = 1_000_000  # 1MB limit
-    files_checked = 0
-    max_files = 5000
+def _search_files_sync(pattern: str, base: Path, file_pattern: str, working_dir: Path, context: int = 0) -> list[str]:
+    """Search files using ripgrep (preferred) or grep (fallback)."""
+    rg_result = _try_ripgrep(pattern, base, file_pattern, context)
+    if rg_result is not None:
+        return rg_result
+    return _search_with_grep(pattern, base, file_pattern, context)
 
-    for file_path in base.rglob(file_pattern):
-        files_checked += 1
-        if files_checked > max_files:
-            results.append(f"... (stopped after {max_files} files)")
-            break
-        if not file_path.is_file():
-            continue
-        if any(part in ignore for part in file_path.parts):
-            continue
-        try:
-            if file_path.stat().st_size > max_file_size:
-                continue
-            content = file_path.read_text()
-            for i, line in enumerate(content.split("\n"), 1):
-                if regex.search(line):
-                    rel_path = file_path.relative_to(working_dir)
-                    results.append(f"{rel_path}:{i}: {line.strip()}")
-                    if len(results) >= 50:
-                        results.append("... (truncated)")
-                        return results
-        except (UnicodeDecodeError, PermissionError, OSError):
-            continue
-    return results
+
+def _try_ripgrep(pattern: str, base: Path, file_pattern: str, context: int) -> list[str] | None:
+    """Search with ripgrep. Returns None if rg not installed."""
+    cmd = ["rg", "--line-number", "--no-heading", "--color=never", "-i", "-m", str(MAX_SEARCH_RESULTS), pattern]
+    if context > 0:
+        cmd.extend(["-C", str(context)])
+    if file_pattern != "*":
+        cmd.extend(["--glob", file_pattern])
+    cmd.append(str(base))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        if result.returncode in (0, 1):  # 0=matches, 1=no matches
+            return result.stdout.strip().split("\n") if result.stdout.strip() else []
+        return None
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return ["... (search timed out)"]
+
+
+def _search_with_grep(pattern: str, base: Path, file_pattern: str, context: int) -> list[str]:
+    """Search with grep (available on all Unix systems)."""
+    cmd = ["grep", "-rni", pattern, str(base)]
+    if context > 0:
+        cmd.insert(1, f"-C{context}")
+    if file_pattern != "*":
+        cmd.extend(["--include", file_pattern])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        if result.stdout:
+            lines = result.stdout.strip().split("\n")
+            return lines[:MAX_SEARCH_RESULTS] + (["... (truncated)"] if len(lines) > MAX_SEARCH_RESULTS else [])
+        return []
+    except subprocess.TimeoutExpired:
+        return ["... (search timed out)"]
 
 
 async def _search_files_impl(
-    pattern: str, path: str, file_pattern: str, working_dir: Path, panel_id: str | None = None
+    pattern: str, path: str, file_pattern: str, working_dir: Path, panel_id: str | None = None, context: int = 0
 ) -> str:
     """Search for a regex pattern in files."""
-    command = f'grep "{pattern}"'
+    tool = "rg" if _has_ripgrep() else "grep"
+    command = f'{tool} "{pattern}"'
     widget_id = await _show_command_widget(command, panel_id)
     base = Path(path)
     if not base.is_absolute():
         base = working_dir / base
     try:
         results = await asyncio.wait_for(
-            asyncio.to_thread(_search_files_sync, pattern, base, file_pattern, working_dir), timeout=30.0
+            asyncio.to_thread(_search_files_sync, pattern, base, file_pattern, working_dir, context), timeout=30.0
         )
         result = "\n".join(results) if results else f"No matches for: {pattern}"
         await _update_command_status(widget_id, "success", result, panel_id)
@@ -471,11 +607,6 @@ async def _search_files_impl(
         await _update_command_status(widget_id, "error", output, panel_id)
         _track_tool_call(command, output, "error", panel_id)
         return f"Search timed out after 30s. Try a more specific path or pattern."
-    except re.error as e:
-        output = f"Invalid regex: {e}"
-        await _update_command_status(widget_id, "error", output, panel_id)
-        _track_tool_call(command, output, "error", panel_id)
-        return output
     except Exception as e:
         output = str(e)
         await _update_command_status(widget_id, "error", output, panel_id)
@@ -485,15 +616,20 @@ async def _search_files_impl(
 
 async def _run_command_impl(command: str, working_dir: Path, panel_id: str | None = None) -> str:
     """Run a shell command and return the output."""
-    global _background_requested, _next_bg_id
+    global _next_bg_id
 
     approved, feedback = await request_tool_approval("run_command", f"$ {command}", panel_id)
     if not approved:
+        # Don't track cancelled operations for consistency
+        if feedback == "Operation cancelled":
+            return "Command cancelled"
         msg = f"Command rejected by user. Feedback: {feedback}" if feedback else "Command rejected by user."
         _track_tool_call(f"$ {command}", msg, "error", panel_id)
         return msg
 
-    _background_requested = False
+    # Clear any pending background request for this panel
+    if panel_id:
+        _background_requested[panel_id] = False
     widget_id = await _show_command_widget(command, panel_id)
 
     try:
@@ -514,8 +650,8 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
         while True:
             await asyncio.sleep(0.05)
 
-            if _background_requested:
-                _background_requested = False
+            if panel_id and _background_requested.get(panel_id, False):
+                _background_requested[panel_id] = False
                 bg_id = f"bg_{_next_bg_id}"
                 _next_bg_id += 1
 
@@ -526,10 +662,9 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
                     output_buffer=output_lines.copy(),
                 )
                 # Store in per-panel dict
-                if panel_id:
-                    if panel_id not in _panel_background_processes:
-                        _panel_background_processes[panel_id] = {}
-                    _panel_background_processes[panel_id][bg_id] = bg_proc
+                if panel_id not in _panel_background_processes:
+                    _panel_background_processes[panel_id] = {}
+                _panel_background_processes[panel_id][bg_id] = bg_proc
 
                 await _update_command_status(widget_id, "backgrounded", panel_id=panel_id)
                 _track_tool_call(f"$ {command}", "backgrounded", "success", panel_id)
@@ -626,9 +761,10 @@ def list_processes(panel_id: str | None = None) -> str:
 def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str | None = None) -> list:
     """Create tool functions bound to a specific working directory, panel, and session."""
 
-    def read_file(path: str) -> str:
-        """Read the contents of a file."""
-        return _read_file_impl(path, working_dir, panel_id)
+    def read_file(path: str, offset: int = 0, limit: int = 2000) -> str:
+        """Read file contents. Default: first 2000 lines. Use offset/limit for specific sections."""
+        # Pass through to impl - 0 offset means start from beginning, limit always honored
+        return _read_file_impl(path, working_dir, panel_id, offset if offset > 0 else None, limit)
 
     def write_file(path: str, content: str) -> str:
         """Create a new file with the given content."""
@@ -640,15 +776,24 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
 
     async def list_files(pattern: str = "**/*", path: str = ".") -> str:
         """List files matching a glob pattern."""
-        return await _list_files_impl(pattern, path, working_dir, panel_id)
+        try:
+            return await _list_files_impl(pattern, path, working_dir, panel_id)
+        except Exception as e:
+            return f"Error listing files: {e}"
 
-    async def search_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
-        """Search for a regex pattern in files."""
-        return await _search_files_impl(pattern, path, file_pattern, working_dir, panel_id)
+    async def search_files(pattern: str, path: str = ".", file_pattern: str = "*", context: int = 0) -> str:
+        """Search for a regex pattern in files. Use context=N to show N lines before/after each match."""
+        try:
+            return await _search_files_impl(pattern, path, file_pattern, working_dir, panel_id, context)
+        except Exception as e:
+            return f"Error searching files: {e}"
 
     async def run_command(command: str) -> str:
         """Run a shell command and return the output."""
-        return await _run_command_impl(command, working_dir, panel_id)
+        try:
+            return await _run_command_impl(command, working_dir, panel_id)
+        except Exception as e:
+            return f"Error running command: {e}"
 
     def bound_get_process_output(process_id: str, lines: int = 50) -> str:
         """Get recent output from a background process."""
@@ -675,14 +820,14 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
     ]
 
 
-CODING_SYSTEM_PROMPT = """You are Wingman, an AI coding assistant. You help users with their codebase.
+CODING_SYSTEM_PROMPT = """You are Wingman, an expert AI coding assistant.
 
 ## Tools Available
-- read_file: Read file contents (ALWAYS do this before editing)
-- edit_file: Modify existing files (old_string must match exactly)
+- read_file(path, offset?, limit?): Read file contents with line numbers (e.g. "   1│ code"). Default: first 2000 lines.
+- edit_file(path, old_string, new_string): Replace old_string with new_string. CRITICAL: old_string must match the actual file content - do NOT include line numbers from read output. Only use content after the "│" character.
 - write_file: Create new files only
 - list_files: Find files with glob patterns
-- search_files: Search file contents with regex
+- search_files(pattern, path?, file_pattern?, context?): Search file contents with regex. Use context=N to show N lines before/after each match.
 - run_command: Execute shell commands (user can press Ctrl+B to background)
 - get_process_output: Check output from backgrounded processes
 - stop_process: Stop a background process
@@ -694,14 +839,15 @@ CODING_SYSTEM_PROMPT = """You are Wingman, an AI coding assistant. You help user
 3. Make minimal, focused edits
 4. If you're unsure, ask the user
 5. For long-running commands, the user may background them with Ctrl+B
+6. If user rejects an edit, STOP and ask what they want - do NOT retry or use shell commands to bypass
 
-## IMPORTANT: Think Out Loud
-BEFORE calling any tool, briefly explain what you're about to do and why. For example:
-- "I'll search for files containing 'server'..."
-- "Let me read the config file to understand the structure..."
-- "I'll run the tests to check if the fix works..."
+## Efficient File Reading
+For large files, search first then read targeted sections:
+1. search_files("function_name", file_pattern="*.py", context=10) → find matches with 10 lines of context
+2. read_file("file.py", offset=line-10, limit=50) → read more if needed
 
-This helps the user follow along with your reasoning. Don't just silently call tools.
+## Communication
+Briefly state what you're doing before each action so the user can follow along. Keep it short.
 
 ## Background Processes
 When a command is backgrounded, you'll see "[Backgrounded: bg_X]". Use get_process_output('bg_X') to check its output later.
@@ -709,3 +855,105 @@ When a command is backgrounded, you'll see "[Backgrounded: bg_X]". Use get_proce
 ## Working Directory
 {cwd}
 """
+
+
+# --- Headless mode implementations (no TUI, auto-approve) ---
+
+
+def _edit_file_impl_headless(path: str, old_string: str, new_string: str, working_dir: Path) -> str:
+    """Edit a file - headless mode (auto-approve, no checkpoints)."""
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = working_dir / file_path
+    file_path = file_path.resolve()
+
+    if not file_path.exists():
+        return f"Error: File not found: {file_path}"
+
+    try:
+        content = file_path.read_text()
+        if old_string not in content:
+            return "Edit failed - text not found. Re-read the file and try again."
+
+        new_content = content.replace(old_string, new_string, 1)
+        file_path.write_text(new_content)
+        return f"Edited: {path}"
+    except OSError as e:
+        return f"Error editing file: {e}"
+
+
+async def _run_command_impl_headless(command: str, working_dir: Path, timeout: int = 120) -> str:
+    """Run a shell command - headless mode (auto-approve)."""
+    try:
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=working_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        output_lines = []
+        start_time = time.time()
+
+        while True:
+            await asyncio.sleep(0.05)
+
+            if proc.poll() is not None:
+                remaining = proc.stdout.read() if proc.stdout else ""
+                if remaining:
+                    output_lines.append(remaining)
+                break
+
+            if proc.stdout:
+                ready, _, _ = select.select([proc.stdout], [], [], 0)
+                if ready:
+                    line = proc.stdout.readline()
+                    if line:
+                        output_lines.append(line)
+
+            if time.time() - start_time > timeout:
+                proc.terminate()
+                output = "".join(output_lines[-50:])
+                return f"Error: Command timed out after {timeout}s\n" + output
+
+        output = "".join(output_lines)
+        if len(output) > 10000:
+            output = output[:10000] + "\n... (truncated)"
+
+        return output or "(no output)"
+
+    except Exception as e:
+        return f"Error running command: {e}"
+
+
+def create_tools_headless(working_dir: Path) -> list:
+    """Create tools for headless mode with auto-approval."""
+
+    def read_file(path: str, offset: int | None = None, limit: int | None = None) -> str:
+        """Read file contents. Default: first 2000 lines."""
+        return _read_file_impl(path, working_dir, None, offset, limit)
+
+    def write_file(path: str, content: str) -> str:
+        """Create a new file with the given content."""
+        return _write_file_impl(path, content, working_dir, None)
+
+    def edit_file(path: str, old_string: str, new_string: str) -> str:
+        """Edit a file by replacing old_string with new_string."""
+        return _edit_file_impl_headless(path, old_string, new_string, working_dir)
+
+    async def list_files(pattern: str = "**/*", path: str = ".") -> str:
+        """List files matching a glob pattern."""
+        return await _list_files_impl(pattern, path, working_dir, None)
+
+    async def search_files(pattern: str, path: str = ".", file_pattern: str = "*", context: int = 0) -> str:
+        """Search for a regex pattern in files."""
+        return await _search_files_impl(pattern, path, file_pattern, working_dir, None, context)
+
+    async def run_command(command: str) -> str:
+        """Run a shell command and return the output."""
+        return await _run_command_impl_headless(command, working_dir)
+
+    return [read_file, write_file, edit_file, list_files, search_files, run_command]

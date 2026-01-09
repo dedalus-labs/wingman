@@ -1,0 +1,573 @@
+/* =============================================================================
+   Wingman App Styles
+   ============================================================================= */
+
+Screen {
+    background: #1a1b26;
+}
+
+/* =============================================================================
+   Sidebar
+   ============================================================================= */
+
+#sidebar {
+    width: 26;
+    height: 100%;
+    background: #1a1b26;
+    border: solid #3b3d4d;
+    border-title-color: #a9b1d6;
+    border-title-style: bold;
+}
+
+#sidebar Tree {
+    padding: 1;
+    background: transparent;
+    scrollbar-size: 0 0;
+}
+
+/* =============================================================================
+   Main Area
+   ============================================================================= */
+
+#main {
+    height: 100%;
+}
+
+#chat-panel {
+    height: 1fr;
+    background: #1a1b26;
+    border: solid #3b3d4d;
+    border-title-color: #a9b1d6;
+    border-title-style: bold;
+    scrollbar-size: 0 0;
+}
+
+#chat-panel:focus-within {
+    scrollbar-size: 1 1;
+}
+
+#chat {
+    padding: 1 2;
+    height: auto;
+}
+
+#welcome {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    text-align: center;
+    padding: 4 2;
+}
+
+/* =============================================================================
+   Messages & Widgets
+   ============================================================================= */
+
+ChatMessage {
+    height: auto;
+    margin-bottom: 1;
+}
+
+Thinking {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+CommandStatus {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+StreamingText {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.loaded-text {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.hidden {
+    display: none;
+}
+
+/* =============================================================================
+   Tool Approval
+   ============================================================================= */
+
+ToolApproval {
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 1 2;
+    background: #1a1b26;
+    border-left: solid #e0af68;
+}
+
+ToolApproval:focus {
+    border-left: solid #7aa2f7;
+}
+
+ToolApproval #approval-input-row {
+    height: auto;
+    margin-top: 1;
+}
+
+ToolApproval #approval-prompt {
+    width: auto;
+    height: 1;
+    padding: 0;
+}
+
+ToolApproval #approval-feedback {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    height: 1;
+}
+
+ToolApproval #approval-feedback:focus {
+    border: none;
+}
+
+/* =============================================================================
+   Input Area
+   ============================================================================= */
+
+#input-panel {
+    height: auto;
+    min-height: 4;
+    max-height: 10;
+    background: #1a1b26;
+    border: solid #3b3d4d;
+    border-title-color: #a9b1d6;
+    border-title-style: bold;
+    padding: 1;
+}
+
+#prompt {
+    background: #24283b;
+    border: none;
+}
+
+#cmd-hint {
+    height: auto;
+    color: #565f89;
+    padding: 0 1;
+}
+
+/* =============================================================================
+   Status Bar
+   ============================================================================= */
+
+#status {
+    height: 1;
+    dock: bottom;
+    background: #16161e;
+    color: #565f89;
+    padding: 0 2;
+}
+
+/* =============================================================================
+   Split Panels
+   ============================================================================= */
+
+#panels-container {
+    height: 1fr;
+}
+
+ChatPanel {
+    width: 1fr;
+    height: 100%;
+    border: solid #3b3d4d;
+    background: #1a1b26;
+}
+
+ChatPanel.active-panel {
+    border: solid #7aa2f7;
+}
+
+.panel-scroll {
+    height: 1fr;
+    scrollbar-size: 0 0;
+}
+
+.panel-scroll:focus-within {
+    scrollbar-size: 1 1;
+}
+
+.panel-chat {
+    padding: 1 2;
+    height: auto;
+}
+
+.panel-welcome {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    text-align: center;
+    padding: 2 1;
+}
+
+.panel-input {
+    height: auto;
+    min-height: 3;
+    max-height: 8;
+    padding: 0 1 1 1;
+}
+
+.panel-prompt {
+    background: #24283b;
+    border: none;
+}
+
+.panel-hint {
+    height: auto;
+    color: #565f89;
+    padding: 0 1;
+}
+
+.panel-chips-row {
+    height: auto;
+    width: 100%;
+}
+
+.panel-chips {
+    height: auto;
+    width: 1fr;
+}
+
+.panel-quit-hint {
+    color: #4c516a;
+    text-align: right;
+    padding: 0 2;
+    text-style: dim;
+}
+
+ImageChip {
+    height: 1;
+    width: auto;
+    margin: 0 1 0 0;
+}
+
+/* =============================================================================
+   Modals
+   ============================================================================= */
+
+/* --- API Key Screen --- */
+APIKeyScreen {
+    align: center middle;
+    background: #1a1b26;
+}
+
+APIKeyScreen > Vertical {
+    width: 70;
+    height: auto;
+    padding: 2 4;
+}
+
+APIKeyScreen .header {
+    text-align: center;
+    color: #7aa2f7;
+    text-style: bold;
+    padding-bottom: 2;
+}
+
+APIKeyScreen .instruction {
+    text-align: center;
+    color: #a9b1d6;
+    padding-bottom: 1;
+}
+
+APIKeyScreen .link {
+    text-align: center;
+    color: #7aa2f7;
+    text-style: underline;
+    padding-bottom: 2;
+}
+
+APIKeyScreen .prompt {
+    text-align: center;
+    color: #a9b1d6;
+    padding-bottom: 1;
+}
+
+APIKeyScreen Input {
+    margin: 1 0;
+    border: solid #3b3d4d;
+    background: #24283b;
+}
+
+APIKeyScreen Input:focus {
+    border: solid #3d59a1;
+}
+
+APIKeyScreen .footer {
+    text-align: center;
+    color: #565f89;
+    padding-top: 2;
+}
+
+APIKeyScreen .error {
+    text-align: center;
+    color: #f7768e;
+    padding-top: 1;
+}
+
+APIKeyScreen .validating {
+    text-align: center;
+    color: #7aa2f7;
+    padding-top: 1;
+}
+
+/* --- Selection Modal --- */
+SelectionModal {
+    align: center middle;
+}
+
+SelectionModal > Vertical {
+    width: 50;
+    height: auto;
+    max-height: 70%;
+    background: #1a1b26;
+    border: solid #3d59a1;
+    padding: 1 2;
+}
+
+SelectionModal ListView {
+    height: auto;
+    max-height: 20;
+    margin-top: 1;
+    background: #1a1b26;
+    scrollbar-size: 0 0;
+}
+
+SelectionModal ListView:focus {
+    border: none;
+}
+
+SelectionModal ListItem {
+    padding: 0 1;
+    background: #1a1b26;
+    color: #a9b1d6;
+}
+
+SelectionModal ListItem:hover {
+    background: #24283b;
+}
+
+SelectionModal ListView > ListItem.--highlight {
+    background: #24283b;
+    color: #7aa2f7;
+}
+
+SelectionModal .title {
+    text-style: bold;
+    color: #7aa2f7;
+    padding-bottom: 1;
+    border-bottom: solid #24283b;
+}
+
+SelectionModal .hint {
+    color: #565f89;
+    text-align: center;
+    padding-top: 1;
+    height: 2;
+}
+
+/* --- Memory Modal --- */
+MemoryModal {
+    align: center middle;
+}
+
+MemoryModal > Vertical {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    background: #1a1b26;
+    border: solid #3d59a1;
+    padding: 1 2;
+}
+
+MemoryModal ListView {
+    height: auto;
+    max-height: 14;
+    margin-top: 1;
+    background: #1a1b26;
+    scrollbar-size: 0 0;
+}
+
+MemoryModal ListView:focus {
+    border: none;
+}
+
+MemoryModal ListItem {
+    padding: 0 1;
+    background: #1a1b26;
+    color: #a9b1d6;
+}
+
+MemoryModal ListItem:hover {
+    background: #24283b;
+}
+
+MemoryModal ListView > ListItem.--highlight {
+    background: #24283b;
+    color: #7aa2f7;
+}
+
+MemoryModal .title {
+    text-style: bold;
+    color: #7aa2f7;
+    padding-bottom: 1;
+    border-bottom: solid #24283b;
+}
+
+MemoryModal .hint {
+    color: #565f89;
+    text-align: center;
+    padding-top: 1;
+}
+
+MemoryModal .empty {
+    color: #565f89;
+    text-align: center;
+    padding: 2;
+}
+
+MemoryModal .preview {
+    color: #565f89;
+    padding: 1;
+    border-top: solid #24283b;
+    margin-top: 1;
+    height: auto;
+    max-height: 4;
+}
+
+/* --- MCP Modal --- */
+MCPModal {
+    align: center middle;
+}
+
+MCPModal > Vertical {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    background: #1a1b26;
+    border: solid #3d59a1;
+    padding: 1 2;
+}
+
+MCPModal ListView {
+    height: auto;
+    max-height: 14;
+    margin-top: 1;
+    background: #1a1b26;
+    scrollbar-size: 0 0;
+}
+
+MCPModal ListView:focus {
+    border: none;
+}
+
+MCPModal ListItem {
+    padding: 0 1;
+    background: #1a1b26;
+    color: #a9b1d6;
+}
+
+MCPModal ListItem:hover {
+    background: #24283b;
+}
+
+MCPModal ListView > ListItem.--highlight {
+    background: #24283b;
+    color: #7aa2f7;
+}
+
+MCPModal .title {
+    text-style: bold;
+    color: #7aa2f7;
+    padding-bottom: 1;
+    border-bottom: solid #24283b;
+}
+
+MCPModal .hint {
+    color: #565f89;
+    text-align: center;
+    padding-top: 1;
+}
+
+MCPModal .empty {
+    color: #565f89;
+    text-align: center;
+    padding: 2;
+}
+
+/* --- Input Modal --- */
+InputModal {
+    align: center middle;
+}
+
+InputModal > Vertical {
+    width: 60;
+    height: auto;
+    background: #1a1b26;
+    border: solid #3d59a1;
+    padding: 1 2;
+}
+
+InputModal .title {
+    text-style: bold;
+    color: #7aa2f7;
+    padding-bottom: 1;
+}
+
+InputModal Input {
+    margin-top: 1;
+}
+
+InputModal Input:focus {
+    border: solid #3d59a1;
+}
+
+/* --- Diff Modal --- */
+DiffModal {
+    align: center middle;
+}
+
+DiffModal > Vertical {
+    width: 90%;
+    max-width: 100;
+    height: auto;
+    max-height: 80%;
+    background: #1a1b26;
+    border: solid #3b3d4d;
+    padding: 1 2;
+}
+
+DiffModal .header {
+    height: auto;
+    padding-bottom: 1;
+}
+
+DiffModal .filepath {
+    color: #565f89;
+}
+
+DiffModal .diff-view {
+    height: auto;
+    max-height: 20;
+    overflow-y: auto;
+    background: #16161e;
+    padding: 1;
+    border: solid #24283b;
+}
+
+DiffModal .hint {
+    height: auto;
+    color: #565f89;
+    text-align: center;
+    padding-top: 1;
+}

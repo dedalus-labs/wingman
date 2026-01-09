@@ -1,0 +1,136 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://github.com/dedalus-labs/wingman/bulletin/schema.json",
+    "title": "Wingman Bulletin",
+    "description": "Schema for Wingman dynamic messaging system",
+    "type": "object",
+    "required": [
+        "version",
+        "messages"
+    ],
+    "properties": {
+        "version": {
+            "type": "integer",
+            "description": "Schema version for backwards compatibility",
+            "minimum": 1
+        },
+        "messages": {
+            "type": "array",
+            "items": {
+                "$ref": "#/definitions/message"
+            }
+        }
+    },
+    "definitions": {
+        "message": {
+            "type": "object",
+            "required": [
+                "id",
+                "type",
+                "content"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Unique identifier for this message",
+                    "pattern": "^[a-z0-9-]+$"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "banner",
+                        "tip",
+                        "notice",
+                        "modal"
+                    ],
+                    "description": "Message display type"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Message content with Rich markup support"
+                },
+                "conditions": {
+                    "$ref": "#/definitions/conditions"
+                },
+                "priority": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Higher priority = shown first"
+                },
+                "dismissible": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether user can dismiss this message"
+                },
+                "dismiss_persist": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Remember dismissal across sessions"
+                },
+                "action": {
+                    "$ref": "#/definitions/action"
+                }
+            }
+        },
+        "conditions": {
+            "type": "object",
+            "description": "Conditions for when to show this message",
+            "properties": {
+                "from": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Show only after this UTC timestamp"
+                },
+                "until": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Show only until this UTC timestamp"
+                },
+                "version_lt": {
+                    "type": "string",
+                    "description": "Show if app version < this (semver)"
+                },
+                "version_gte": {
+                    "type": "string",
+                    "description": "Show if app version >= this (semver)"
+                },
+                "first_run": {
+                    "type": "boolean",
+                    "description": "Show only on first run"
+                },
+                "platforms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "darwin",
+                            "linux",
+                            "win32"
+                        ]
+                    },
+                    "description": "Show only on these platforms"
+                }
+            }
+        },
+        "action": {
+            "type": "object",
+            "description": "Optional call-to-action",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Button/link text"
+                },
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "URL to open (must be https)"
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Slash command to execute",
+                    "pattern": "^/[a-z]+"
+                }
+            }
+        }
+    }
+}

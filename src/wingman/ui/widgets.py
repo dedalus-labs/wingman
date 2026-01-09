@@ -2,9 +2,11 @@
 
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -13,28 +15,231 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Input, Static
 
+from ..bulletin import get_bulletin_manager
+from ..command_completion import CompletionContext, apply_completion, get_completion_context, resolve_completion
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
-from ..images import CachedImage, create_image_message_from_cache
+from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
 from ..sessions import get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
 
 
+@dataclass
+class _CompletionCycle:
+    candidates: list[str]
+    include_slash: bool
+    replace_start: int
+    replace_end: int
+    kind: str
+    value: str
+    cursor_position: int
+    index: int
+
+    @classmethod
+    def from_context(
+        cls,
+        context: CompletionContext,
+        value: str,
+        cursor_position: int,
+        index: int,
+    ) -> "_CompletionCycle":
+        replacement = f"/{context.candidates[index]}" if context.include_slash else context.candidates[index]
+        return cls(
+            candidates=context.candidates,
+            include_slash=context.include_slash,
+            replace_start=context.replace_start,
+            replace_end=context.replace_start + len(replacement),
+            kind=context.kind,
+            value=value,
+            cursor_position=cursor_position,
+            index=index,
+        )
+
+    def is_active_for(self, value: str, cursor_position: int) -> bool:
+        return self.value == value and self.cursor_position == cursor_position
+
+    def next_index(self) -> int:
+        return (self.index + 1) % len(self.candidates)
+
+    def to_context(self, value: str, cursor_position: int) -> CompletionContext:
+        return CompletionContext(
+            value=value,
+            cursor_position=cursor_position,
+            candidates=self.candidates,
+            prefix="",
+            replace_start=self.replace_start,
+            replace_end=self.replace_end,
+            include_slash=self.include_slash,
+            kind=self.kind,
+        )
+
+    def advance(self, index: int, value: str, cursor_position: int) -> "_CompletionCycle":
+        replacement = f"/{self.candidates[index]}" if self.include_slash else self.candidates[index]
+        return _CompletionCycle(
+            candidates=self.candidates,
+            include_slash=self.include_slash,
+            replace_start=self.replace_start,
+            replace_end=self.replace_start + len(replacement),
+            kind=self.kind,
+            value=value,
+            cursor_position=cursor_position,
+            index=index,
+        )
+
+
 class MultilineInput(Input):
-    """Input that joins pasted multi-line text instead of truncating."""
+    """Input that joins pasted multi-line text, clears on escape, and collapses long pastes."""
+
+    LONG_PASTE_THRESHOLD = 200
+
+    BINDINGS = [
+        Binding("ctrl+a", "select_all", "Select All", show=False),
+    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pasted_content: str | None = None
+        self._paste_placeholder: str | None = None
+        self._completion_cycle: _CompletionCycle | None = None
+
+    def _on_key(self, event) -> None:
+        if event.key == "tab" and self._handle_tab_completion():
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key != "tab":
+            self._completion_cycle = None
+        # Let typing proceed normally - user can type after the placeholder
+        # Content will be expanded on submit via get_submit_value()
+        super()._on_key(event)
+
+    def _handle_tab_completion(self) -> bool:
+        if not self.value.lstrip().startswith("/"):
+            return False
+        if not self.selection.is_empty:
+            self._completion_cycle = None
+            return True
+        if self._completion_cycle and self._completion_cycle.is_active_for(self.value, self.cursor_position):
+            self._apply_cycle_candidate(self._completion_cycle.next_index())
+            return True
+        context = get_completion_context(self.value, self.cursor_position)
+        if context is None or not context.candidates:
+            self._completion_cycle = None
+            return True
+        completion = resolve_completion(context.prefix, context.candidates)
+        if completion is not None:
+            result = apply_completion(context, completion, add_space=len(context.candidates) == 1)
+            self.value = result.value
+            self.cursor_position = result.cursor_position
+            self._completion_cycle = None
+            return True
+        self._start_completion_cycle(context)
+        return True
 
     def _on_paste(self, event: events.Paste) -> None:
+        self._completion_cycle = None
         if event.text:
-            # Join all lines with spaces instead of taking only the first line
-            cleaned = " ".join(event.text.split())
-            selection = self.selection
-            if selection.is_empty:
-                self.insert_text_at_cursor(cleaned)
+            # Check if this looks like an image path - don't collapse those
+            text_lower = event.text.lower().strip().strip("'\"")
+            is_image = any(text_lower.endswith(ext) for ext in IMAGE_EXTENSIONS) or (
+                text_lower.startswith("file://")
+                and any(ext in text_lower for ext in IMAGE_EXTENSIONS)
+            )
+
+            if is_image:
+                # For image paths, preserve the path exactly (just trim whitespace)
+                cleaned = event.text.strip()
+                self._pasted_content = None
+                self._paste_placeholder = None
+                selection = self.selection
+                if selection.is_empty:
+                    self.insert_text_at_cursor(cleaned)
+                else:
+                    self.replace(cleaned, *selection)
             else:
-                self.replace(cleaned, *selection)
+                # For regular text, join multiple lines
+                cleaned = " ".join(event.text.split())
+
+                if len(cleaned) > self.LONG_PASTE_THRESHOLD:
+                    self._pasted_content = cleaned
+                    self._paste_placeholder = f"[pasted {len(cleaned)} chars]"
+                    # Insert placeholder at cursor, preserving existing text
+                    selection = self.selection
+                    if selection.is_empty:
+                        self.insert_text_at_cursor(self._paste_placeholder)
+                    else:
+                        self.replace(self._paste_placeholder, *selection)
+                else:
+                    self._pasted_content = None
+                    self._paste_placeholder = None
+                    selection = self.selection
+                    if selection.is_empty:
+                        self.insert_text_at_cursor(cleaned)
+                    else:
+                        self.replace(cleaned, *selection)
         event.stop()
         event.prevent_default()
 
+    def get_submit_value(self) -> str:
+        """Get the actual value to submit (expanded paste + any additional text)."""
+        if self._pasted_content is not None and self._paste_placeholder is not None:
+            # Find placeholder in value and replace with actual pasted content
+            if self._paste_placeholder in self.value:
+                content = self.value.replace(self._paste_placeholder, self._pasted_content, 1)
+            else:
+                # Placeholder was edited/removed, just use current value
+                content = self.value
+            self._pasted_content = None
+            self._paste_placeholder = None
+            return content
+        return self.value
+
+    def _get_panel(self) -> "ChatPanel | None":
+        for ancestor in self.ancestors_with_self:
+            if isinstance(ancestor, ChatPanel):
+                return ancestor
+        return None
+
+    def _start_completion_cycle(self, context: CompletionContext) -> None:
+        if not context.candidates:
+            self._completion_cycle = None
+            return
+        result = apply_completion(context, context.candidates[0], add_space=False)
+        self.value = result.value
+        self.cursor_position = result.cursor_position
+        self._completion_cycle = _CompletionCycle.from_context(context, result.value, result.cursor_position, index=0)
+        self._update_cycle_hint()
+
+    def _apply_cycle_candidate(self, candidate_index: int) -> None:
+        if not self._completion_cycle:
+            return
+        candidate = self._completion_cycle.candidates[candidate_index]
+        context = self._completion_cycle.to_context(self.value, self.cursor_position)
+        result = apply_completion(context, candidate, add_space=False)
+        self.value = result.value
+        self.cursor_position = result.cursor_position
+        self._completion_cycle = self._completion_cycle.advance(
+            candidate_index,
+            result.value,
+            result.cursor_position,
+        )
+        self._update_cycle_hint()
+
+    def _update_cycle_hint(self) -> None:
+        """Update hint to show cycling candidates with current selection highlighted."""
+        panel = self._get_panel()
+        if not panel or not self._completion_cycle:
+            return
+        hint = panel.get_hint()
+        candidates = self._completion_cycle.candidates
+        current_idx = self._completion_cycle.index
+        parts = []
+        for i, cand in enumerate(candidates):
+            if i == current_idx:
+                parts.append(f"[bold #9ece6a]{cand}[/]")
+            else:
+                parts.append(f"[#7aa2f7]{cand}[/]")
+        hint.update("  ".join(parts))
 
 class ChatMessage(Static):
     """Single chat message."""
@@ -46,22 +251,23 @@ class ChatMessage(Static):
 
     def compose(self) -> ComposeResult:
         if self.role == "user":
-            yield Static(Text.from_markup(f"[#7aa2f7]>[/] {self.content}"))
+            yield Static(Text.from_markup(f"[#7aa2f7]>[/] {escape(self.content)}"))
         else:
             yield Static(Text.from_markup("[bold #bb9af7]Assistant[/]"))
             yield Static(Markdown(self.content))
 
 
 class Thinking(Static):
-    """Loading indicator with status label."""
+    """Loading indicator with dynamic status label."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    LABELS = ["Mazing", "Soaring"]
+    IDLE_LABELS = ["Mazing", "Soaring", "Ascending Olympus", "Weaving fate", "Consulting the Oracle"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._frame = 0
-        self._label = random.choice(self.LABELS)
+        self._status: str | None = None
+        self._idle_label = random.choice(self.IDLE_LABELS)
 
     def on_mount(self) -> None:
         self.set_interval(0.08, self._tick)
@@ -70,8 +276,16 @@ class Thinking(Static):
         self._frame = (self._frame + 1) % len(self.FRAMES)
         self.refresh()
 
+    def set_status(self, status: str | None) -> None:
+        """Update the status label (e.g., 'Reading config.py')."""
+        self._status = status
+        self.refresh()
+
     def render(self) -> Text:
-        return Text.from_markup(f"[#e0af68]{self.FRAMES[self._frame]}[/] [dim #a9b1d6]{self._label}...[/]")
+        spinner = f"[#e0af68]{self.FRAMES[self._frame]}[/]"
+        if self._status:
+            return Text.from_markup(f"{spinner} [#a9b1d6]{escape(self._status)}[/]")
+        return Text.from_markup(f"{spinner} [dim #a9b1d6]{self._idle_label}...[/]")
 
 
 class StreamingText(Static):
@@ -84,11 +298,12 @@ class StreamingText(Static):
     def append_text(self, text: str) -> None:
         """Append text to the streaming content."""
         self._content += text
-        self.update(Text.from_markup(f"[#c0caf5]{self._content}[/]"))
+        self.update(Text.from_markup(f"[#c0caf5]{escape(self._content)}[/]"))
 
     def mark_complete(self) -> None:
-        """Ensure final content is displayed."""
-        self.update(Text.from_markup(f"[#c0caf5]{self._content}[/]"))
+        """Ensure final content is displayed, stripped of trailing whitespace."""
+        self._content = self._content.rstrip()
+        self.update(Text.from_markup(f"[#c0caf5]{escape(self._content)}[/]"))
 
 
 class ToolApproval(Vertical, can_focus=True):
@@ -129,8 +344,8 @@ class ToolApproval(Vertical, can_focus=True):
 
         if self._feedback_mode:
             lines = [
-                f"[bold #e0af68]{self.tool_name}[/]",
-                f"  [dim]{self.command}[/]",
+                f"[bold #e0af68]{escape(self.tool_name)}[/]",
+                f"  [dim]{escape(self.command)}[/]",
             ]
             content.update(Text.from_markup("\n".join(lines)))
             input_row.remove_class("hidden")
@@ -142,8 +357,8 @@ class ToolApproval(Vertical, can_focus=True):
                 ("n.", "No, and tell me what to do differently", "#f7768e"),
             ]
             lines = [
-                f"[bold #e0af68]{self.tool_name}[/]",
-                f"  [dim]{self.command}[/]",
+                f"[bold #e0af68]{escape(self.tool_name)}[/]",
+                f"  [dim]{escape(self.command)}[/]",
                 "",
                 "[#a9b1d6]Do you want to proceed?[/]",
             ]
@@ -216,8 +431,8 @@ class ImageChip(Static, can_focus=True):
         if len(display_name) > 30:
             display_name = display_name[:27] + "..."
         if self.has_focus:
-            return Text.from_markup(f"[bold #7dcfff]\\[{display_name}][/]")
-        return Text.from_markup(f"[#7dcfff]\\[{display_name}][/]")
+            return Text.from_markup(f"[bold #7dcfff]\\[{escape(display_name)}][/]")
+        return Text.from_markup(f"[#7dcfff]\\[{escape(display_name)}][/]")
 
     def action_remove(self) -> None:
         self.post_message(self.Removed(self.index))
@@ -294,7 +509,7 @@ class CommandStatus(Static):
             dot = f"[{colors[self._pulse]}]•[/]"
             hint = "  [dim]Ctrl+B to background[/]"
 
-        result = f"{dot} [dim]$ {self.command}[/]{hint}"
+        result = f"{dot} [dim]$ {escape(self.command)}[/]{hint}"
 
         # Add output preview if available
         if self._output and self._status in ("success", "error"):
@@ -304,7 +519,7 @@ class CommandStatus(Static):
                 for line in lines[: self.MAX_OUTPUT_LINES]:
                     if len(line) > self.MAX_LINE_LENGTH:
                         line = line[: self.MAX_LINE_LENGTH - 3] + "..."
-                    preview_lines.append(f"  [dim #7dcfff]→[/] [#a9b1d6]{line}[/]")
+                    preview_lines.append(f"  [dim #7dcfff]→[/] [#a9b1d6]{escape(line)}[/]")
                 if len(lines) > self.MAX_OUTPUT_LINES:
                     preview_lines.append(f"  [dim]... +{len(lines) - self.MAX_OUTPUT_LINES} more lines[/]")
                 result += "\n" + "\n".join(preview_lines)
@@ -335,6 +550,7 @@ class ChatPanel(Vertical):
         self.mcp_servers: list[str] = []
         self._is_active = False
         self._generating = False
+        self._cancel_requested = False
         self.working_dir: Path = Path.cwd()
 
     @property
@@ -349,9 +565,11 @@ class ChatPanel(Vertical):
         with VerticalScroll(id=f"{self.panel_id}-scroll", classes="panel-scroll"):
             yield Vertical(id=f"{self.panel_id}-chat", classes="panel-chat")
         with Vertical(classes="panel-input"):
-            yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
+            with Horizontal(id=f"{self.panel_id}-chips-row", classes="panel-chips-row"):
+                yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
+                yield Static("Ctrl+C to quit", id=f"{self.panel_id}-quit-hint", classes="panel-quit-hint")
             yield MultilineInput(
-                placeholder="Message... (/ for commands)", id=f"{self.panel_id}-prompt", classes="panel-prompt"
+                placeholder="Type... (/ for commands)", id=f"{self.panel_id}-prompt", classes="panel-prompt"
             )
             yield Static("", id=f"{self.panel_id}-hint", classes="panel-hint")
 
@@ -362,12 +580,38 @@ class ChatPanel(Vertical):
         chat = self.query_one(f"#{self.panel_id}-chat", Vertical)
         use_big = self.size.width >= 70 and not force_compact
         art = WELCOME_ART if use_big else WELCOME_ART_COMPACT
-        welcome = f"""{art}
-[dim]v{APP_VERSION} · {APP_CREDIT}[/]
 
-[#565f89]Type to chat · [bold #7aa2f7]/[/] for commands · [bold #7aa2f7]Ctrl+S[/] for sessions[/]"""
+        # Get banner and tip from bulletin system
+        manager = get_bulletin_manager()
+        manager.load_sync("banners")
+        manager.load_sync("tips")
+        banners = manager.get_active("banners")
+        tips = manager.get_active("tips")
+
+        banner_line = banners[0].content if banners else ""
+        tip_line = random.choice(tips).content if tips else ""
+        tip_text = f"\nTip: {tip_line}" if tip_line else ""
+        welcome = f"""{art}
+[dim]{APP_CREDIT}[/]
+[dim]v{APP_VERSION}[/]
+
+{banner_line}
+
+[#565f89][bold]/[/] for commands · [bold]Ctrl+S[/] for sessions{tip_text}[/]"""
         chat.remove_children()
         chat.mount(Static(welcome, classes="panel-welcome"))
+
+    def on_click(self, event: events.Click) -> None:
+        """Click to focus this panel."""
+        if not self._is_active:
+            self.post_message(self.Clicked(self))
+
+    class Clicked(Message):
+        """Posted when panel is clicked."""
+
+        def __init__(self, panel: "ChatPanel") -> None:
+            super().__init__()
+            self.panel = panel
 
     def set_active(self, active: bool) -> None:
         self._is_active = active
@@ -417,8 +661,12 @@ class ChatPanel(Vertical):
         self.get_scroll_container().scroll_end(animate=False)
 
     def show_info(self, text: str) -> None:
+        """Show ephemeral info (replaces previous info, not sent to model)."""
         chat = self.get_chat_container()
-        chat.mount(Static(f"[dim]{text}[/]"))
+        # Remove previous info widgets (they have no id, just class check)
+        for widget in chat.query(".info-text"):
+            widget.remove()
+        chat.mount(Static(f"[dim]{text}[/]", classes="info-text"))
         self.get_scroll_container().scroll_end(animate=False)
 
     def clear_chat(self) -> None:
@@ -460,7 +708,7 @@ class ChatPanel(Vertical):
                             # Match StreamingText color and spacing
                             chat.mount(
                                 Static(
-                                    Text.from_markup(f"[#c0caf5]{content}[/]"),
+                                    Text.from_markup(f"[#c0caf5]{escape(content)}[/]"),
                                     id=f"loaded-{base_id}-{widget_id}",
                                     classes="loaded-text",
                                 )

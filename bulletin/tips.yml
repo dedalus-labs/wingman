@@ -1,0 +1,29 @@
+---
+# Wingman Tips
+# Randomly show one on the welcome screen
+#
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin/schema.json
+# Rich markup: https://rich.readthedocs.io/en/stable/markup.html
+
+version: 1
+
+messages:
+  - id: "tip-model-switch"
+    type: tip
+    content: "[bold]Ctrl+M[/] to switch models"
+
+  - id: "tip-split-panels"
+    type: tip
+    content: "[bold]/split[/] to open another panel"
+
+  - id: "tip-coding-mode"
+    type: tip
+    content: "[bold]Ctrl+K[/] toggles coding mode"
+
+  - id: "tip-context-usage"
+    type: tip
+    content: "[bold]/context[/] to check usage"
+
+  - id: "tip-checkpoints"
+    type: tip
+    content: "[bold]/history[/] to browse checkpoints"

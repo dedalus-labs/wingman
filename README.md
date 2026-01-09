@@ -1,6 +1,11 @@
 # Wingman
 
 <div align="center">
+  <code>uv tool install wingman-cli</code>
+</div>
+<br>
+
+<div align="center">
   <img src="assets/readme.png" alt="Ralph 'Wingman' Wiggum flying with Dedalus wings" width="720">
 </div>
 
@@ -27,6 +32,22 @@
 uv tool install wingman-cli
 ```
 
+<details>
+  <summary><span style="color: #7a7a7a; font-style: italic;">Installing <code>uv</code></span></summary>
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Or via pip/pipx
+pip install uv
+```
+
+</details>
+
 ### Using pip
 
 ```bash
@@ -42,42 +63,44 @@ pipx install wingman-cli
 ## Quick Start
 
 1. **Run Wingman**:
+
    ```bash
    wingman
    ```
 
 2. **Enter your Dedalus API key** when prompted
+
    - Get your key at [dedaluslabs.ai/dashboard/api-keys](https://dedaluslabs.ai/dashboard/api-keys)
 
 3. **Start chatting** - Type your message and press Enter
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `/new` | Start new chat |
-| `/rename <name>` | Rename session |
-| `/delete` | Delete session |
-| `/split` | Split panel |
-| `/close` | Close panel |
-| `/model` | Switch model |
-| `/code` | Toggle coding mode |
-| `/cd <path>` | Change directory |
-| `/ls` | List files |
-| `/ps` | List processes |
-| `/kill <id>` | Stop process |
-| `/history` | View checkpoints |
+| Command          | Description        |
+| ---------------- | ------------------ |
+| `/new`           | Start new chat     |
+| `/rename <name>` | Rename session     |
+| `/delete`        | Delete session     |
+| `/split`         | Split panel        |
+| `/close`         | Close panel        |
+| `/model`         | Switch model       |
+| `/code`          | Toggle coding mode |
+| `/cd <path>`     | Change directory   |
+| `/ls`            | List files         |
+| `/ps`            | List processes     |
+| `/kill <id>`     | Stop process       |
+| `/history`       | View checkpoints   |
 | `/rollback <id>` | Restore checkpoint |
-| `/diff` | Show changes |
-| `/compact` | Compact context |
-| `/context` | Context usage |
-| `/mcp` | MCP servers |
-| `/memory` | Project memory |
-| `/export` | Export session |
-| `/import <file>` | Import file |
-| `/key` | API key |
-| `/clear` | Clear chat |
-| `/help` | Show help |
+| `/diff`          | Show changes       |
+| `/compact`       | Compact context    |
+| `/context`       | Context usage      |
+| `/mcp`           | MCP servers        |
+| `/memory`        | Project memory     |
+| `/export`        | Export session     |
+| `/import <file>` | Import file        |
+| `/key`           | API key            |
+| `/clear`         | Clear chat         |
+| `/help`          | Show help          |
 
 ## Configuration
 
@@ -124,10 +147,18 @@ Wingman automatically detects and uses these tools when available, falling back 
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE) for details.
 
 ## Links
 
 - [Dedalus Labs](https://dedaluslabs.ai)
 - [Documentation](https://docs.dedaluslabs.ai)
 - [Discord](https://discord.com/invite/RuDhZKnq5R)
+
+---
+
+<div align="center">
+  <sub>Dedalus Labs © 2026.</sub>
+</div>
+
+---

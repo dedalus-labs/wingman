@@ -2,8 +2,10 @@
 
 import base64
 import mimetypes
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
@@ -17,31 +19,68 @@ class CachedImage:
     data_url: str
 
 
-def is_image_path(text: str) -> Path | None:
-    """Check if text is a valid image file path."""
-    import re
+def _normalize_path(text: str) -> list[str]:
+    """Generate candidate paths from various terminal paste formats."""
+    candidates = [text]
 
+    # Handle file:// URLs (some apps paste these)
+    if text.startswith("file://"):
+        parsed = urlparse(text)
+        # URL-decode the path (%20 -> space, etc.)
+        decoded = unquote(parsed.path)
+        candidates.append(decoded)
+
+    # Handle backslash-escaped spaces (zsh/bash: /path/to\ file.png)
+    if "\\ " in text:
+        unescaped = text.replace("\\ ", " ")
+        candidates.append(unescaped)
+
+    # Handle URL-encoded paths without file:// prefix
+    if "%" in text:
+        candidates.append(unquote(text))
+
+    return candidates
+
+
+def is_image_path(text: str) -> Path | None:
+    """Check if text is a valid image file path.
+
+    Handles various terminal paste formats:
+    - Plain paths: /path/to/image.png
+    - Quoted paths: '/path/to/image.png' or "/path/to/image.png"
+    - Backslash-escaped: /path/to\\ image.png (zsh/bash)
+    - file:// URLs: file:///path/to%20image.png
+    - macOS screenshots with narrow no-break space before AM/PM
+    """
     # Strip whitespace and surrounding quotes
     text = text.strip().strip("'\"")
     if not text:
         return None
 
-    # Quick check: does it end with an image extension?
-    if not any(text.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+    # Quick check: does it look like it ends with an image extension?
+    # (check before normalization for URL-encoded extensions like .png)
+    text_lower = text.lower()
+    has_image_ext = any(
+        text_lower.endswith(ext) or f"{ext}%" in text_lower or ext in text_lower
+        for ext in IMAGE_EXTENSIONS
+    )
+    if not has_image_ext:
         return None
 
-    # Try the path as-is
-    path = Path(text).expanduser()
-    if path.exists() and path.is_file():
-        return path
-
-    # macOS screenshots use narrow no-break space (\u202f) before AM/PM
-    # Terminals strip this when pasting, so try reinserting it
-    fixed = re.sub(r"(\d)(AM|PM)", "\\1\u202f\\2", text, flags=re.IGNORECASE)
-    if fixed != text:
-        path = Path(fixed).expanduser()
+    # Try each normalized candidate
+    for candidate in _normalize_path(text):
+        path = Path(candidate).expanduser()
         if path.exists() and path.is_file():
             return path
+
+        # macOS screenshots use narrow no-break space (\u202f) before AM/PM
+        # Terminals may strip this or replace with regular space, so try fixing it
+        # Pattern handles both "10AM" and "10 AM" -> "10\u202fAM"
+        fixed = re.sub(r"(\d)\s?(AM|PM)", "\\1\u202f\\2", candidate, flags=re.IGNORECASE)
+        if fixed != candidate:
+            path = Path(fixed).expanduser()
+            if path.exists() and path.is_file():
+                return path
 
     return None
 

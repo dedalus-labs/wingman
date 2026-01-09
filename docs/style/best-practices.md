@@ -374,3 +374,4 @@ class ToolInput(BaseModel):
 async with httpx.AsyncClient(timeout=30.0) as client:
     response = await client.get(url)
 ```
+

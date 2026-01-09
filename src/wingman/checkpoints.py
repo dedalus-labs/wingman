@@ -1,13 +1,13 @@
 """Checkpoint and rollback system."""
 
 import difflib
-import json
 import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import CHECKPOINTS_DIR
+from .lib import oj
 
 CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +60,7 @@ class CheckpointManager:
         index_file = CHECKPOINTS_DIR / "index.json"
         if index_file.exists():
             try:
-                data = json.loads(index_file.read_text())
+                data = oj.loads(index_file.read_text())
                 self._checkpoints = [Checkpoint.from_dict(cp, CHECKPOINTS_DIR) for cp in data.get("checkpoints", [])]
                 self._counter = data.get("counter", 0)
             except Exception:
@@ -72,7 +72,7 @@ class CheckpointManager:
             "counter": self._counter,
             "checkpoints": [cp.to_dict() for cp in self._checkpoints],
         }
-        index_file.write_text(json.dumps(data, indent=2))
+        index_file.write_text(oj.dumps(data, indent=2))
 
     def create(self, paths: list[Path], description: str = "", session_id: str | None = None) -> Checkpoint | None:
         files = {}

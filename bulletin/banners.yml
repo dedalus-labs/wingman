@@ -1,0 +1,16 @@
+---
+# Wingman Banners
+# Displayed messages on the homepage
+#
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin/schema.json
+# Rich markup: https://rich.readthedocs.io/en/stable/markup.html
+
+version: 1
+
+messages:
+  - id: "beta-free-models"
+    type: banner
+    content: "Use any model for [bold]FREE[/bold] until Jan 12th, 2026."
+    conditions:
+      until: "2026-01-12T23:59:59Z"
+    priority: 100

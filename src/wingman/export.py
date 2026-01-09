@@ -1,8 +1,9 @@
 """Session export and import."""
 
-import json
 import time
 from pathlib import Path
+
+from .lib import oj
 
 
 def export_session_markdown(messages: list[dict], session_id: str | None = None) -> str:
@@ -40,7 +41,7 @@ def export_session_markdown(messages: list[dict], session_id: str | None = None)
 def export_session_json(messages: list[dict], session_id: str | None = None) -> str:
     """Export session to JSON format."""
     export_data = {"session_id": session_id, "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"), "messages": messages}
-    return json.dumps(export_data, indent=2)
+    return oj.dumps(export_data, indent=2)
 
 
 def import_session_from_file(path: Path) -> list[dict] | None:
@@ -51,12 +52,12 @@ def import_session_from_file(path: Path) -> list[dict] | None:
 
     if path.suffix == ".json":
         try:
-            data = json.loads(content)
+            data = oj.loads(content)
             if isinstance(data, dict) and "messages" in data:
                 return data["messages"]
             if isinstance(data, list):
                 return data
-        except json.JSONDecodeError:
+        except Exception:
             pass
 
     messages = []

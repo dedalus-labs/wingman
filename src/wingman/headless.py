@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 
-from .config import MODELS, load_api_key
+from .config import MODELS, load_api_key, load_instructions
 from .tools import CODING_SYSTEM_PROMPT, create_tools_headless
 
 
@@ -48,6 +48,11 @@ async def run_headless(
 
         # Build system prompt
         system_content = CODING_SYSTEM_PROMPT.format(cwd=working_dir)
+
+        # Include custom instructions (global first, then local)
+        instructions = load_instructions(working_dir)
+        if instructions:
+            system_content += f"\n\n{instructions}"
 
         messages = [
             {"role": "system", "content": system_content},

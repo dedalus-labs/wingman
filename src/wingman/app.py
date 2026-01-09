@@ -9,7 +9,7 @@ from pathlib import Path
 from dedalus_labs import AsyncDedalus, DedalusRunner
 from rich.markup import escape
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -310,6 +310,20 @@ class WingmanApp(App):
             if not isinstance(event.widget, (Button, Input, ListView, ImageChip)):
                 panel.get_input().focus()
 
+    def on_paste(self, event: events.Paste) -> None:
+        """Route paste events to the active input if not already focused there."""
+        panel = self.active_panel
+        if not panel:
+            return
+
+        input_widget = panel.get_input()
+        # If paste didn't go to the input (e.g., dropped while unfocused), route it there
+        if self.focused != input_widget and event.text:
+            # Focus the input and manually trigger paste handling
+            input_widget.focus()
+            input_widget._on_paste(event)
+            event.stop()
+
     @on(ImageChip.Removed)
     def on_image_chip_removed(self, event: ImageChip.Removed) -> None:
         """Remove an image when its chip is deleted."""
@@ -421,10 +435,13 @@ class WingmanApp(App):
         text = event.value
 
         # Auto-detect image paths (drag-and-drop)
-        if text and any(
-            text.strip().strip("'\"").lower().endswith(ext)
+        # Check for image extensions in various formats (plain, URL-encoded, backslash-escaped)
+        text_lower = text.strip().strip("'\"").lower() if text else ""
+        has_image_ext = any(
+            text_lower.endswith(ext) or text_lower.endswith(ext.replace(".", "%2e"))
             for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
-        ):
+        )
+        if text and has_image_ext:
             image_path = is_image_path(text)
             if image_path:
                 # Prevent duplicate adds from rapid-fire input events
@@ -565,6 +582,7 @@ class WingmanApp(App):
             if self.coding_mode:
                 kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
 
+
             # Set session context for checkpoint tracking
             set_current_session(panel.session_id)
             clear_segments(panel.panel_id)  # Clear segment tracking for new response
@@ -579,29 +597,53 @@ class WingmanApp(App):
             self._update_status()
             try:
                 stream = self.runner.run(**kwargs)
-                async for chunk in stream:
-                    if panel._cancel_requested:
-                        was_cancelled = True
-                        break
-                    if hasattr(chunk, "choices") and chunk.choices:
-                        delta = chunk.choices[0].delta
 
-                        # Tool call detected - finalize current text segment
-                        if hasattr(delta, "tool_calls") and delta.tool_calls:
-                            if streaming_widget is not None:
-                                streaming_widget.mark_complete()
-                                streaming_widget = None
+                # Handle both stream manager (event API) and raw iterator
+                # Stream manager has __aenter__ but not __aiter__
+                if hasattr(stream, "__aenter__") and not hasattr(stream, "__aiter__"):
+                    # Event API stream (e.g., Gemini)
+                    async with stream as event_stream:
+                        async for event in event_stream:
+                            if panel._cancel_requested:
+                                was_cancelled = True
+                                break
+                            # Handle content.delta events
+                            if hasattr(event, "type") and event.type == "content.delta":
+                                content = getattr(event, "delta", None)
+                                if content:
+                                    if streaming_widget is None:
+                                        widget_id += 1
+                                        streaming_widget = StreamingText(id=f"streaming-{widget_id}")
+                                        chat.mount(streaming_widget, before=thinking)
+                                    add_text_segment(content, panel.panel_id)
+                                    streaming_widget.append_text(content)
+                                    panel.get_scroll_container().scroll_end(animate=False)
+                                    await asyncio.sleep(0)
+                else:
+                    # Raw chunk iterator (OpenAI-style)
+                    async for chunk in stream:
+                        if panel._cancel_requested:
+                            was_cancelled = True
+                            break
+                        if hasattr(chunk, "choices") and chunk.choices:
+                            delta = chunk.choices[0].delta
 
-                        # Stream text content
-                        if hasattr(delta, "content") and delta.content:
-                            if streaming_widget is None:
-                                widget_id += 1
-                                streaming_widget = StreamingText(id=f"streaming-{widget_id}")
-                                chat.mount(streaming_widget, before=thinking)
-                            add_text_segment(delta.content, panel.panel_id)  # Track text segment
-                            streaming_widget.append_text(delta.content)
-                            panel.get_scroll_container().scroll_end(animate=False)
-                            await asyncio.sleep(0)
+                            # Tool call detected - finalize current text segment
+                            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                                if streaming_widget is not None:
+                                    streaming_widget.mark_complete()
+                                    streaming_widget = None
+
+                            # Stream text content
+                            if hasattr(delta, "content") and delta.content:
+                                if streaming_widget is None:
+                                    widget_id += 1
+                                    streaming_widget = StreamingText(id=f"streaming-{widget_id}")
+                                    chat.mount(streaming_widget, before=thinking)
+                                add_text_segment(delta.content, panel.panel_id)
+                                streaming_widget.append_text(delta.content)
+                                panel.get_scroll_container().scroll_end(animate=False)
+                                await asyncio.sleep(0)
             finally:
                 panel._generating = False
                 set_current_session(None)
@@ -1298,6 +1340,10 @@ Useful for: API patterns, file locations, conventions.
                 panel.context.model = result
             self._show_info(f"Model: {result}")
             self._update_status()
+            # Warn if new model has smaller context and needs compacting
+            panel = self.active_panel
+            if panel and panel.context.needs_compacting:
+                self.notify("Context exceeds model limit. Run /compact", severity="warning")
 
     @work
     async def action_add_mcp(self) -> None:

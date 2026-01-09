@@ -22,6 +22,7 @@ Screen {
 #sidebar Tree {
     padding: 1;
     background: transparent;
+    scrollbar-size: 0 0;
 }
 
 /* =============================================================================
@@ -282,6 +283,12 @@ APIKeyScreen .prompt {
 
 APIKeyScreen Input {
     margin: 1 0;
+    border: solid #3b3d4d;
+    background: #24283b;
+}
+
+APIKeyScreen Input:focus {
+    border: solid #3d59a1;
 }
 
 APIKeyScreen .footer {
@@ -318,12 +325,10 @@ SelectionModal > Vertical {
 
 SelectionModal ListView {
     height: auto;
-    max-height: 12;
+    max-height: 20;
     margin-top: 1;
     background: #1a1b26;
-    scrollbar-background: #1a1b26;
-    scrollbar-color: #414868;
-    scrollbar-size: 1 1;
+    scrollbar-size: 0 0;
 }
 
 SelectionModal ListView:focus {
@@ -378,9 +383,7 @@ MemoryModal ListView {
     max-height: 14;
     margin-top: 1;
     background: #1a1b26;
-    scrollbar-background: #1a1b26;
-    scrollbar-color: #414868;
-    scrollbar-size: 1 1;
+    scrollbar-size: 0 0;
 }
 
 MemoryModal ListView:focus {
@@ -451,6 +454,10 @@ InputModal .title {
 
 InputModal Input {
     margin-top: 1;
+}
+
+InputModal Input:focus {
+    border: solid #3d59a1;
 }
 
 /* --- Diff Modal --- */

@@ -4,12 +4,41 @@ from dataclasses import dataclass, field
 
 from dedalus_labs import AsyncDedalus
 
-# Approximate context window sizes
+# Context window sizes from https://models.dev/api.json
 MODEL_CONTEXT_LIMITS = {
-    "openai/gpt-4.1": 128_000,
-    "anthropic/claude-sonnet-4-20250514": 200_000,
+    # OpenAI
+    "openai/gpt-5": 400_000,
+    "openai/gpt-5-mini": 400_000,
+    "openai/gpt-4.1": 1_047_576,
+    "openai/gpt-4.1-mini": 1_047_576,
+    "openai/gpt-4o": 128_000,
+    "openai/gpt-4o-mini": 128_000,
+    "openai/o1": 200_000,
+    "openai/o3": 200_000,
+    "openai/o3-mini": 200_000,
+    "openai/o4-mini": 200_000,
+    "openai/gpt-4-turbo": 128_000,
+    # Anthropic (all 200K)
     "anthropic/claude-opus-4-5-20251101": 200_000,
-    "google/gemini-2.5-pro-preview-06-05": 1_000_000,
+    "anthropic/claude-sonnet-4-5-20250929": 200_000,
+    "anthropic/claude-haiku-4-5-20251001": 200_000,
+    "anthropic/claude-sonnet-4-20250514": 200_000,
+    # Google (~1M)
+    "google/gemini-2.5-pro": 1_048_576,
+    "google/gemini-2.5-flash": 1_048_576,
+    "google/gemini-2.0-flash": 1_048_576,
+    # xAI (Grok 4 has 2M, Grok 3 has 131K)
+    "xai/grok-4-fast-reasoning": 2_000_000,
+    "xai/grok-4-fast-non-reasoning": 2_000_000,
+    "xai/grok-3": 131_072,
+    "xai/grok-3-mini": 131_072,
+    # DeepSeek (128K)
+    "deepseek/deepseek-chat": 128_000,
+    "deepseek/deepseek-reasoner": 128_000,
+    # Mistral
+    "mistral/mistral-large-latest": 262_144,
+    "mistral/mistral-small-latest": 128_000,
+    "mistral/codestral-2508": 256_000,
 }
 
 AUTO_COMPACT_THRESHOLD = 0.85
@@ -75,7 +104,7 @@ class ContextManager:
 
     @property
     def usage_percent(self) -> float:
-        return self.total_tokens / self.context_limit
+        return min(1.0, self.total_tokens / self.context_limit)
 
     @property
     def tokens_remaining(self) -> int:
@@ -123,7 +152,7 @@ class ContextManager:
 
         try:
             result = await client.chat.completions.create(
-                model=self.model.split("/")[-1],
+                model=self.model,
                 messages=[{"role": "user", "content": summary_prompt}],
                 max_tokens=2000,
             )

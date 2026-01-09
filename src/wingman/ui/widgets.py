@@ -17,7 +17,7 @@ from textual.widgets import Input, Static
 from ..bulletin import get_bulletin_manager
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
-from ..images import CachedImage, create_image_message_from_cache
+from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
 from ..sessions import get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
 
@@ -27,29 +27,32 @@ class MultilineInput(Input):
 
     LONG_PASTE_THRESHOLD = 200
 
+    BINDINGS = [
+        Binding("ctrl+a", "select_all", "Select All", show=False),
+    ]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._pasted_content: str | None = None
         self._paste_placeholder: str | None = None
 
     def _on_key(self, event) -> None:
-        if self._pasted_content is not None and event.key not in ("enter", "up", "down", "escape"):
-            # User is typing - clear the paste and let them type normally
-            self._pasted_content = None
-            self._paste_placeholder = None
-            self.value = ""
+        # Let typing proceed normally - user can type after the placeholder
+        # Content will be expanded on submit via get_submit_value()
         super()._on_key(event)
 
     def _on_paste(self, event: events.Paste) -> None:
         if event.text:
-            cleaned = " ".join(event.text.split())
+            # Check if this looks like an image path - don't collapse those
+            text_lower = event.text.lower().strip().strip("'\"")
+            is_image = any(text_lower.endswith(ext) for ext in IMAGE_EXTENSIONS) or (
+                text_lower.startswith("file://")
+                and any(ext in text_lower for ext in IMAGE_EXTENSIONS)
+            )
 
-            if len(cleaned) > self.LONG_PASTE_THRESHOLD:
-                self._pasted_content = cleaned
-                self._paste_placeholder = f"[pasted {len(cleaned)} chars]"
-                self.value = self._paste_placeholder
-                self.cursor_position = len(self._paste_placeholder)
-            else:
+            if is_image:
+                # For image paths, preserve the path exactly (just trim whitespace)
+                cleaned = event.text.strip()
                 self._pasted_content = None
                 self._paste_placeholder = None
                 selection = self.selection
@@ -57,13 +60,36 @@ class MultilineInput(Input):
                     self.insert_text_at_cursor(cleaned)
                 else:
                     self.replace(cleaned, *selection)
+            else:
+                # For regular text, join multiple lines
+                cleaned = " ".join(event.text.split())
+
+                if len(cleaned) > self.LONG_PASTE_THRESHOLD:
+                    self._pasted_content = cleaned
+                    self._paste_placeholder = f"[pasted {len(cleaned)} chars]"
+                    self.value = self._paste_placeholder
+                    self.cursor_position = len(self._paste_placeholder)
+                else:
+                    self._pasted_content = None
+                    self._paste_placeholder = None
+                    selection = self.selection
+                    if selection.is_empty:
+                        self.insert_text_at_cursor(cleaned)
+                    else:
+                        self.replace(cleaned, *selection)
         event.stop()
         event.prevent_default()
 
     def get_submit_value(self) -> str:
-        """Get the actual value to submit (expanded paste or regular value)."""
-        if self._pasted_content is not None:
-            content = self._pasted_content
+        """Get the actual value to submit (expanded paste + any additional text)."""
+        if self._pasted_content is not None and self._paste_placeholder is not None:
+            # Check if user typed after the placeholder
+            if self.value.startswith(self._paste_placeholder):
+                additional = self.value[len(self._paste_placeholder):]
+                content = self._pasted_content + additional
+            else:
+                # Placeholder was edited/removed, just use current value
+                content = self.value
             self._pasted_content = None
             self._paste_placeholder = None
             return content

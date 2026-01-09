@@ -738,9 +738,10 @@ def list_processes(panel_id: str | None = None) -> str:
 def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str | None = None) -> list:
     """Create tool functions bound to a specific working directory, panel, and session."""
 
-    def read_file(path: str, offset: int | None = None, limit: int | None = None) -> str:
+    def read_file(path: str, offset: int = 0, limit: int = 2000) -> str:
         """Read file contents. Default: first 2000 lines. Use offset/limit for specific sections."""
-        return _read_file_impl(path, working_dir, panel_id, offset, limit)
+        # Pass through to impl - 0 offset means start from beginning, limit always honored
+        return _read_file_impl(path, working_dir, panel_id, offset if offset > 0 else None, limit)
 
     def write_file(path: str, content: str) -> str:
         """Create a new file with the given content."""

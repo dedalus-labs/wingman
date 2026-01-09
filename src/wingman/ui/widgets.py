@@ -15,6 +15,7 @@ from textual.message import Message
 from textual.widgets import Input, Static
 
 from ..bulletin import get_bulletin_manager
+from ..command_completion import apply_completion, get_completion_context, resolve_completion
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
@@ -37,9 +38,29 @@ class MultilineInput(Input):
         self._paste_placeholder: str | None = None
 
     def _on_key(self, event) -> None:
+        if event.key == "tab" and self._handle_tab_completion():
+            event.stop()
+            event.prevent_default()
+            return
         # Let typing proceed normally - user can type after the placeholder
         # Content will be expanded on submit via get_submit_value()
         super()._on_key(event)
+
+    def _handle_tab_completion(self) -> bool:
+        if not self.value.lstrip().startswith("/"):
+            return False
+        if not self.selection.is_empty:
+            return True
+        context = get_completion_context(self.value, self.cursor_position)
+        if context is None or not context.candidates:
+            return True
+        completion = resolve_completion(context.prefix, context.candidates)
+        if completion is not None:
+            result = apply_completion(context, completion, add_space=len(context.candidates) == 1)
+            self.value = result.value
+            self.cursor_position = result.cursor_position
+            return True
+        return True
 
     def _on_paste(self, event: events.Paste) -> None:
         if event.text:
@@ -97,7 +118,6 @@ class MultilineInput(Input):
             self._paste_placeholder = None
             return content
         return self.value
-
 
 class ChatMessage(Static):
     """Single chat message."""

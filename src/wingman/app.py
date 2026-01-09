@@ -16,11 +16,11 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static, Tree
 
 from .checkpoints import get_checkpoint_manager, set_current_session
+from .command_completion import get_hint_candidates
 from .config import (
     APP_CREDIT,
     APP_NAME,
     APP_VERSION,
-    COMMANDS,
     MARKETPLACE_SERVERS,
     MODELS,
     fetch_marketplace_servers,
@@ -472,11 +472,9 @@ class WingmanApp(App):
                     return
 
         if text.startswith("/"):
-            search = text[1:].lower()
-            matches = [
-                f"[#7aa2f7]{cmd}[/]" for cmd, desc in COMMANDS if search in cmd.lower() or search in desc.lower()
-            ]
-            hint.update("  ".join(matches) if matches else "")
+            matches = get_hint_candidates(text, event.input.cursor_position)
+            formatted = "  ".join(f"[#7aa2f7]{cmd}[/]" for cmd in matches)
+            hint.update(formatted if formatted else "")
         elif panel.pending_images:
             hint.update("[dim]↑ to select images · backspace to remove[/]")
         else:

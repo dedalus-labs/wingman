@@ -94,6 +94,13 @@ COMMANDS = [
     ("/feature", "Request feature"),
 ]
 
+# Options for command completion (first argument only).
+COMMAND_OPTIONS: dict[str, list[str]] = {
+    "export": ["json"],
+    "memory": ["add", "clear", "delete", "help"],
+    "mcp": ["clear"],
+}
+
 
 def load_api_key() -> str | None:
     """Load API key from config file."""

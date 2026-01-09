@@ -79,6 +79,8 @@ async def request_tool_approval(tool_name: str, command: str, panel_id: str | No
     if _app_instance is None:
         return (True, "")
     result, feedback = await _app_instance.request_tool_approval(tool_name, command, panel_id)
+    if result == "cancelled":
+        return (False, "Operation cancelled")
     if result == "always":
         if panel_id:
             if panel_id not in _panel_allowed_tools:
@@ -601,6 +603,9 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
 
     approved, feedback = await request_tool_approval("run_command", f"$ {command}", panel_id)
     if not approved:
+        # Don't track cancelled operations for consistency
+        if feedback == "Operation cancelled":
+            return "Command cancelled"
         msg = f"Command rejected by user. Feedback: {feedback}" if feedback else "Command rejected by user."
         _track_tool_call(f"$ {command}", msg, "error", panel_id)
         return msg

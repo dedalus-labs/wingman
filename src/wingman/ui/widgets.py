@@ -67,8 +67,12 @@ class MultilineInput(Input):
                 if len(cleaned) > self.LONG_PASTE_THRESHOLD:
                     self._pasted_content = cleaned
                     self._paste_placeholder = f"[pasted {len(cleaned)} chars]"
-                    self.value = self._paste_placeholder
-                    self.cursor_position = len(self._paste_placeholder)
+                    # Insert placeholder at cursor, preserving existing text
+                    selection = self.selection
+                    if selection.is_empty:
+                        self.insert_text_at_cursor(self._paste_placeholder)
+                    else:
+                        self.replace(self._paste_placeholder, *selection)
                 else:
                     self._pasted_content = None
                     self._paste_placeholder = None
@@ -83,10 +87,9 @@ class MultilineInput(Input):
     def get_submit_value(self) -> str:
         """Get the actual value to submit (expanded paste + any additional text)."""
         if self._pasted_content is not None and self._paste_placeholder is not None:
-            # Check if user typed after the placeholder
-            if self.value.startswith(self._paste_placeholder):
-                additional = self.value[len(self._paste_placeholder):]
-                content = self._pasted_content + additional
+            # Find placeholder in value and replace with actual pasted content
+            if self._paste_placeholder in self.value:
+                content = self.value.replace(self._paste_placeholder, self._pasted_content, 1)
             else:
                 # Placeholder was edited/removed, just use current value
                 content = self.value

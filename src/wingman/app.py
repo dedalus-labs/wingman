@@ -307,8 +307,13 @@ class WingmanApp(App):
             # Focus the input unless clicking on an interactive element
             from textual.widgets import Button, Input, ListView
 
-            if not isinstance(event.widget, (Button, Input, ListView, ImageChip)):
-                panel.get_input().focus()
+            if not isinstance(event.widget, (Button, Input, ListView, ImageChip, ToolApproval)):
+                # If there's a pending tool approval, focus that instead
+                approvals = list(panel.query("ToolApproval"))
+                if approvals:
+                    approvals[0].focus()
+                else:
+                    panel.get_input().focus()
 
     def on_paste(self, event: events.Paste) -> None:
         """Route paste events to the active input if not already focused there."""
@@ -367,12 +372,21 @@ class WingmanApp(App):
             panel = self.active_panel
             if panel and panel._generating:
                 panel._cancel_requested = True
+                panel._generating = False  # Clear immediately
+                self._update_status()
+                # Remove thinking spinners
                 for thinking in panel.query("Thinking"):
                     try:
                         thinking.remove()
                     except Exception:
                         pass
-                self._show_info("[#e0af68]Generation cancelled[/]")
+                # Remove pending tool approvals
+                for approval in panel.query("ToolApproval"):
+                    try:
+                        approval.remove()
+                    except Exception:
+                        pass
+                self.notify("Generation cancelled", severity="warning", timeout=2)
                 event.stop()
                 event.prevent_default()
                 return
@@ -478,6 +492,11 @@ class WingmanApp(App):
         if not panel:
             return
 
+        # Block input while generating
+        if panel._generating:
+            self.notify("Wait for response to complete", severity="warning", timeout=2)
+            return
+
         # Activate this panel if it's not active
         if panel != self.active_panel:
             self._set_active_panel(self.panels.index(panel))
@@ -521,6 +540,9 @@ class WingmanApp(App):
             panel.add_image_message("user", text, images_to_send)
         else:
             panel.add_message("user", text)
+        
+        # Save session immediately after user message
+        save_session(panel.session_id, panel.messages)
 
         chat = panel.get_chat_container()
         thinking = Thinking(id="thinking")
@@ -614,7 +636,12 @@ class WingmanApp(App):
                                     if streaming_widget is None:
                                         widget_id += 1
                                         streaming_widget = StreamingText(id=f"streaming-{widget_id}")
-                                        chat.mount(streaming_widget, before=thinking)
+                                        try:
+                                            chat.mount(streaming_widget, before=thinking)
+                                        except Exception:
+                                            # Thinking widget was removed (cancelled)
+                                            was_cancelled = True
+                                            break
                                     add_text_segment(content, panel.panel_id)
                                     streaming_widget.append_text(content)
                                     panel.get_scroll_container().scroll_end(animate=False)
@@ -639,7 +666,12 @@ class WingmanApp(App):
                                 if streaming_widget is None:
                                     widget_id += 1
                                     streaming_widget = StreamingText(id=f"streaming-{widget_id}")
-                                    chat.mount(streaming_widget, before=thinking)
+                                    try:
+                                        chat.mount(streaming_widget, before=thinking)
+                                    except Exception:
+                                        # Thinking widget was removed (cancelled)
+                                        was_cancelled = True
+                                        break
                                 add_text_segment(delta.content, panel.panel_id)
                                 streaming_widget.append_text(delta.content)
                                 panel.get_scroll_container().scroll_end(animate=False)
@@ -647,10 +679,10 @@ class WingmanApp(App):
             finally:
                 panel._generating = False
                 set_current_session(None)
-                self._update_status()
 
             if streaming_widget is not None:
                 streaming_widget.mark_complete()
+            self._update_status()
 
             try:
                 thinking.remove()
@@ -677,9 +709,15 @@ class WingmanApp(App):
                     sw.remove()
                 except Exception:
                     pass
-            # Remove the failed user message from history to prevent resending
-            if panel.messages and panel.messages[-1].get("role") == "user":
-                panel.messages.pop()
+            # Save any partial segments before showing error
+            segments = get_segments(panel.panel_id)
+            if segments:
+                panel.messages.append({"role": "assistant", "segments": segments})
+                save_session(panel.session_id, panel.messages)
+            else:
+                # Only remove user message if there was no assistant response at all
+                if panel.messages and panel.messages[-1].get("role") == "user":
+                    panel.messages.pop()
             self._show_info("[#f7768e]Request timed out[/]")
 
         except Exception as e:
@@ -694,14 +732,20 @@ class WingmanApp(App):
                     sw.remove()
                 except Exception:
                     pass
+            # Save any partial segments before handling error
+            segments = get_segments(panel.panel_id)
+            if segments:
+                panel.messages.append({"role": "assistant", "segments": segments})
+                save_session(panel.session_id, panel.messages)
+            else:
+                # Only remove user message if there was no assistant response at all
+                if panel.messages and panel.messages[-1].get("role") == "user":
+                    panel.messages.pop()
             error_msg = str(e)
-            # Remove the failed user message from history to prevent resending
-            if panel.messages and panel.messages[-1].get("role") == "user":
-                panel.messages.pop()
             if "timeout" in error_msg.lower():
                 self._show_info("[#f7768e]Request timed out[/]")
-            else:
-                # Don't use Rich markup - error may contain brackets
+            elif "cancelled" not in error_msg.lower():
+                # Don't show error for cancellations, and don't use Rich markup
                 panel.add_message("assistant", f"Error: {error_msg}")
 
     def show_diff_approval(self) -> None:
@@ -738,10 +782,20 @@ class WingmanApp(App):
         except Exception:
             chat.mount(widget)
         panel.get_scroll_container().scroll_end(animate=False)
+        widget.focus()
+        # Wait for widget to mount first
+        while not widget.is_mounted:
+            await asyncio.sleep(0.01)
+        # Now wait for result or cancellation
         while widget.result is None:
+            if not widget.is_mounted or panel._cancel_requested:
+                return ("cancelled", "")
             await asyncio.sleep(0.05)
         result = widget.result
-        widget.remove()
+        try:
+            widget.remove()
+        except Exception:
+            pass  # Already removed
         # Restore thinking spinner
         if thinking:
             thinking.display = True
@@ -779,13 +833,21 @@ class WingmanApp(App):
         panel = self.active_panel
         if panel and panel._generating:
             panel._cancel_requested = True
-            # Remove thinking spinner immediately
+            panel._generating = False  # Clear immediately
+            self._update_status()
+            # Remove thinking spinners
             for thinking in panel.query("Thinking"):
                 try:
                     thinking.remove()
                 except Exception:
                     pass
-            self._show_info("[#e0af68]Generation cancelled[/]")
+            # Remove pending tool approvals
+            for approval in panel.query("ToolApproval"):
+                try:
+                    approval.remove()
+                except Exception:
+                    pass
+            self.notify("Generation cancelled", severity="warning", timeout=2)
         elif panel:
             # Clear the input if not generating
             try:
@@ -997,6 +1059,17 @@ class WingmanApp(App):
         if not panel:
             return
         session_id = arg.strip() if arg else panel.session_id
+        # Fall back to highlighted session in sidebar (but not the root node)
+        if not session_id:
+            try:
+                tree = self.query_one("#sessions", Tree)
+                if tree.cursor_node and tree.cursor_node != tree.root:
+                    if tree.cursor_node.data:
+                        session_id = str(tree.cursor_node.data)
+                    else:
+                        session_id = str(tree.cursor_node.label)
+            except Exception:
+                pass
         if not session_id:
             self._show_info("No session to delete")
             return
@@ -1016,14 +1089,46 @@ class WingmanApp(App):
             return
         if not arg:
             self.action_add_mcp()
+        elif arg == "list":
+            if not panel.mcp_servers:
+                self._show_info("No MCP servers configured")
+            else:
+                servers = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(panel.mcp_servers))
+                self._show_info(f"[bold]Active MCP servers:[/]\n{servers}\n[dim]Use /mcp remove <number> to remove[/]")
         elif arg == "clear":
             panel.mcp_servers = []
             self._show_info("Cleared all MCP servers")
             self._update_status()
+        elif arg.startswith("remove "):
+            if not panel.mcp_servers:
+                self._show_info("No MCP servers to remove")
+                return
+            target = arg[7:].strip()
+            # Check if it's a number
+            if target.isdigit():
+                idx = int(target) - 1  # 1-indexed
+                if 0 <= idx < len(panel.mcp_servers):
+                    removed = panel.mcp_servers.pop(idx)
+                    self._show_info(f"Removed MCP server: {removed}")
+                    self._update_status()
+                else:
+                    self._show_info(f"Invalid index: {target} (have {len(panel.mcp_servers)} servers)")
+            elif target in panel.mcp_servers:
+                panel.mcp_servers.remove(target)
+                self._show_info(f"Removed MCP server: {target}")
+                self._update_status()
+            else:
+                self._show_info(f"Server not found: {target}")
+        elif arg == "remove":
+            self._show_info("Usage: /mcp remove <server>")
         else:
-            panel.mcp_servers.append(arg)
-            self._show_info(f"Added MCP server: {arg}")
-            self._update_status()
+            # Check for duplicates before adding
+            if arg in panel.mcp_servers:
+                self._show_info(f"MCP server already added: {arg}")
+            else:
+                panel.mcp_servers.append(arg)
+                self._show_info(f"Added MCP server: {arg}")
+                self._update_status()
 
     def _cmd_code(self, arg: str) -> None:
         self.coding_mode = not self.coding_mode
@@ -1365,16 +1470,22 @@ Useful for: API patterns, file locations, conventions.
                     InputModal("Add MCP Server", placeholder="Enter server URL or slug...")
                 )
                 if custom:
-                    panel.mcp_servers.append(custom)
-                    self._show_info(f"Added MCP server: {custom}")
-                    self._update_status()
+                    if custom in panel.mcp_servers:
+                        self._show_info(f"MCP server already added: {custom}")
+                    else:
+                        panel.mcp_servers.append(custom)
+                        self._show_info(f"Added MCP server: {custom}")
+                        self._update_status()
             else:
                 match = re.search(r"\(([^)]+)\)$", result)
                 if match:
                     slug = match.group(1)
-                    panel.mcp_servers.append(slug)
-                    self._show_info(f"Added MCP server: {slug}")
-                    self._update_status()
+                    if slug in panel.mcp_servers:
+                        self._show_info(f"MCP server already added: {slug}")
+                    else:
+                        panel.mcp_servers.append(slug)
+                        self._show_info(f"Added MCP server: {slug}")
+                        self._update_status()
 
     def action_clear_chat(self) -> None:
         """Clear chat in the active panel."""

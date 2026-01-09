@@ -1358,6 +1358,7 @@ Useful for: API patterns, file locations, conventions.
             "clear": lambda: self.action_clear_chat(),
             "help": lambda: self.action_help(),
             "quit": lambda: self.exit(),
+            "exit": lambda: self.exit(),
             "ls": lambda: self._do_ls(arg or "*", self.active_panel.working_dir if self.active_panel else Path.cwd()),
             "ps": lambda: self._show_info(
                 f"[bold #7aa2f7]Background Processes[/]\n{list_processes(self.active_panel.panel_id if self.active_panel else None)}"
@@ -1557,6 +1558,9 @@ Useful for: API patterns, file locations, conventions.
 [bold #a9b1d6]Config[/]
   [#7aa2f7]/model[/]          Switch model
   [#7aa2f7]/context[/]        Show context usage
+
+[bold #a9b1d6]App[/]
+  [#7aa2f7]/exit[/]           Quit Wingman
 
 [bold #a9b1d6]Feedback[/]
   [#7aa2f7]/bug[/]            Report a bug

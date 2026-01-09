@@ -423,7 +423,9 @@ class ChatPanel(Vertical):
         with VerticalScroll(id=f"{self.panel_id}-scroll", classes="panel-scroll"):
             yield Vertical(id=f"{self.panel_id}-chat", classes="panel-chat")
         with Vertical(classes="panel-input"):
-            yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
+            with Horizontal(id=f"{self.panel_id}-chips-row", classes="panel-chips-row"):
+                yield Horizontal(id=f"{self.panel_id}-chips", classes="panel-chips")
+                yield Static("Ctrl+C to quit", id=f"{self.panel_id}-quit-hint", classes="panel-quit-hint")
             yield MultilineInput(
                 placeholder="Type... (/ for commands)", id=f"{self.panel_id}-prompt", classes="panel-prompt"
             )

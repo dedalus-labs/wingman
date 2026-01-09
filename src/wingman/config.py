@@ -89,6 +89,7 @@ COMMANDS = [
     ("/key", "API key"),
     ("/clear", "Clear chat"),
     ("/help", "Show help"),
+    ("/exit", "Quit Wingman"),
     ("/bug", "Report a bug"),
     ("/feature", "Request feature"),
 ]

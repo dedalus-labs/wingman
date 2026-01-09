@@ -228,9 +228,21 @@ ChatPanel.active-panel {
     padding: 0 1;
 }
 
-.panel-chips {
+.panel-chips-row {
     height: auto;
     width: 100%;
+}
+
+.panel-chips {
+    height: auto;
+    width: 1fr;
+}
+
+.panel-quit-hint {
+    color: #4c516a;
+    text-align: right;
+    padding: 0 2;
+    text-style: dim;
 }
 
 ImageChip {

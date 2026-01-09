@@ -2,6 +2,7 @@
 
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich.markdown import Markdown
@@ -15,12 +16,75 @@ from textual.message import Message
 from textual.widgets import Input, Static
 
 from ..bulletin import get_bulletin_manager
-from ..command_completion import apply_completion, get_completion_context, resolve_completion
+from ..command_completion import CompletionContext, apply_completion, get_completion_context, resolve_completion
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
 from ..sessions import get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
+
+
+@dataclass
+class _CompletionCycle:
+    candidates: list[str]
+    include_slash: bool
+    replace_start: int
+    replace_end: int
+    kind: str
+    value: str
+    cursor_position: int
+    index: int
+
+    @classmethod
+    def from_context(
+        cls,
+        context: CompletionContext,
+        value: str,
+        cursor_position: int,
+        index: int,
+    ) -> "_CompletionCycle":
+        replacement = f"/{context.candidates[index]}" if context.include_slash else context.candidates[index]
+        return cls(
+            candidates=context.candidates,
+            include_slash=context.include_slash,
+            replace_start=context.replace_start,
+            replace_end=context.replace_start + len(replacement),
+            kind=context.kind,
+            value=value,
+            cursor_position=cursor_position,
+            index=index,
+        )
+
+    def is_active_for(self, value: str, cursor_position: int) -> bool:
+        return self.value == value and self.cursor_position == cursor_position
+
+    def next_index(self) -> int:
+        return (self.index + 1) % len(self.candidates)
+
+    def to_context(self, value: str, cursor_position: int) -> CompletionContext:
+        return CompletionContext(
+            value=value,
+            cursor_position=cursor_position,
+            candidates=self.candidates,
+            prefix="",
+            replace_start=self.replace_start,
+            replace_end=self.replace_end,
+            include_slash=self.include_slash,
+            kind=self.kind,
+        )
+
+    def advance(self, index: int, value: str, cursor_position: int) -> "_CompletionCycle":
+        replacement = f"/{self.candidates[index]}" if self.include_slash else self.candidates[index]
+        return _CompletionCycle(
+            candidates=self.candidates,
+            include_slash=self.include_slash,
+            replace_start=self.replace_start,
+            replace_end=self.replace_start + len(replacement),
+            kind=self.kind,
+            value=value,
+            cursor_position=cursor_position,
+            index=index,
+        )
 
 
 class MultilineInput(Input):
@@ -36,12 +100,15 @@ class MultilineInput(Input):
         super().__init__(*args, **kwargs)
         self._pasted_content: str | None = None
         self._paste_placeholder: str | None = None
+        self._completion_cycle: _CompletionCycle | None = None
 
     def _on_key(self, event) -> None:
         if event.key == "tab" and self._handle_tab_completion():
             event.stop()
             event.prevent_default()
             return
+        if event.key != "tab":
+            self._completion_cycle = None
         # Let typing proceed normally - user can type after the placeholder
         # Content will be expanded on submit via get_submit_value()
         super()._on_key(event)
@@ -50,19 +117,27 @@ class MultilineInput(Input):
         if not self.value.lstrip().startswith("/"):
             return False
         if not self.selection.is_empty:
+            self._completion_cycle = None
+            return True
+        if self._completion_cycle and self._completion_cycle.is_active_for(self.value, self.cursor_position):
+            self._apply_cycle_candidate(self._completion_cycle.next_index())
             return True
         context = get_completion_context(self.value, self.cursor_position)
         if context is None or not context.candidates:
+            self._completion_cycle = None
             return True
         completion = resolve_completion(context.prefix, context.candidates)
         if completion is not None:
             result = apply_completion(context, completion, add_space=len(context.candidates) == 1)
             self.value = result.value
             self.cursor_position = result.cursor_position
+            self._completion_cycle = None
             return True
+        self._start_completion_cycle(context)
         return True
 
     def _on_paste(self, event: events.Paste) -> None:
+        self._completion_cycle = None
         if event.text:
             # Check if this looks like an image path - don't collapse those
             text_lower = event.text.lower().strip().strip("'\"")
@@ -118,6 +193,29 @@ class MultilineInput(Input):
             self._paste_placeholder = None
             return content
         return self.value
+
+    def _start_completion_cycle(self, context: CompletionContext) -> None:
+        if not context.candidates:
+            self._completion_cycle = None
+            return
+        result = apply_completion(context, context.candidates[0], add_space=False)
+        self.value = result.value
+        self.cursor_position = result.cursor_position
+        self._completion_cycle = _CompletionCycle.from_context(context, result.value, result.cursor_position, index=0)
+
+    def _apply_cycle_candidate(self, candidate_index: int) -> None:
+        if not self._completion_cycle:
+            return
+        candidate = self._completion_cycle.candidates[candidate_index]
+        context = self._completion_cycle.to_context(self.value, self.cursor_position)
+        result = apply_completion(context, candidate, add_space=False)
+        self.value = result.value
+        self.cursor_position = result.cursor_position
+        self._completion_cycle = self._completion_cycle.advance(
+            candidate_index,
+            result.value,
+            result.cursor_position,
+        )
 
 class ChatMessage(Static):
     """Single chat message."""

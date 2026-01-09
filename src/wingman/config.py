@@ -211,13 +211,14 @@ def load_instructions(working_dir: Path | None = None) -> str:
 
 
 async def fetch_marketplace_servers() -> list[dict]:
-    """Fetch MCP servers from the marketplace."""
+    """Fetch featured MCP servers from the marketplace."""
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             resp = await client.get(f"{DEDALUS_SITE_URL}/api/marketplace")
             if resp.status_code == 200:
                 data = resp.json()
-                return data.get("repositories", [])
+                repos = data.get("repositories", [])
+                return [r for r in repos if r.get("tags", {}).get("use_cases", {}).get("featured", False)]
     except Exception:
         pass
     return []

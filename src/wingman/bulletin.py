@@ -15,36 +15,36 @@ from .lib import oj
 
 # URLs and paths
 REMOTE_BASE = "https://raw.githubusercontent.com/dedalus-labs/wingman/main/bulletin"
-CACHE_DIR = CONFIG_DIR / "bulletin_cache"
 DISMISSED_FILE = CONFIG_DIR / "bulletin_dismissed.json"
-
-CACHE_TTL = 3600
 
 
 def _get_bulletin_dir() -> Path | None:
-    """Get local bulletin directory if available."""
-    # Explicit override
+    """Get local bulletin directory if dev mode enabled.
+
+    Returns local bulletin dir if:
+    - WINGMAN_BULLETIN_PATH set to a valid directory, OR
+    - WINGMAN_DEV set (uses ./bulletin relative to repo root)
+
+    Otherwise returns None (fetch from GitHub).
+    """
+    # Explicit path override
     if path := os.environ.get("WINGMAN_BULLETIN_PATH"):
         p = Path(path)
         if p.is_dir():
             return p
 
-    # Dev mode env var
+    # Dev mode: use local bulletin/ dir in repo
     if os.environ.get("WINGMAN_DEV"):
-        for candidate in [Path.cwd() / "bulletin", Path(__file__).parent.parent.parent / "bulletin"]:
-            if candidate.is_dir():
-                return candidate
-
-    # Auto-detect editable install
-    local = Path(__file__).parent.parent.parent / "bulletin"
-    if local.is_dir() and (local / "banners.yml").exists():
-        return local
+        # Assumes bulletin/ is at repo root (3 levels up from this file)
+        local = Path(__file__).parent.parent.parent / "bulletin"
+        if local.is_dir():
+            return local
 
     return None
 
 
 def is_dev_mode() -> bool:
-    """Check if local bulletin files are available."""
+    """True if using local bulletin files instead of remote fetch."""
     return _get_bulletin_dir() is not None
 
 
@@ -195,12 +195,12 @@ def load_local(category: str) -> list[Bulletin]:
         return []
 
 
-async def fetch_remote(category: str) -> list[Bulletin]:
-    """Fetch bulletins from GitHub."""
+def fetch_remote_sync(category: str) -> list[Bulletin]:
+    """Fetch bulletins from GitHub synchronously."""
     url = f"{REMOTE_BASE}/{category}.yml"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(url)
+        with httpx.Client(timeout=3.0) as client:
+            resp = client.get(url)
             if resp.status_code == 200:
                 return load_from_yaml(resp.text)
     except Exception:
@@ -248,18 +248,11 @@ class BulletinManager:
         return sorted(active, key=lambda b: b.priority, reverse=True)
 
     def load_sync(self, category: str) -> list[Bulletin]:
-        """Load bulletins synchronously (dev mode only)."""
-        if is_dev_mode():
-            self._loaded[category] = load_local(category)
-            return self._loaded[category]
-        return []
-
-    async def load_async(self, category: str) -> list[Bulletin]:
-        """Load bulletins asynchronously."""
+        """Load bulletins synchronously. Dev mode overrides remote with local."""
         if is_dev_mode():
             self._loaded[category] = load_local(category)
         else:
-            self._loaded[category] = await fetch_remote(category)
+            self._loaded[category] = fetch_remote_sync(category)
         return self._loaded[category]
 
 

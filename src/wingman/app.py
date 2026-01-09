@@ -1601,6 +1601,13 @@ def main():
     import argparse
     import sys
 
+    # Load environment variables from .env file
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = argparse.ArgumentParser(prog="wingman", description="Wingman - AI coding assistant for the terminal")
     parser.add_argument(
         "-p",

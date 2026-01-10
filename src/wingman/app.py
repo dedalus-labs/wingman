@@ -401,7 +401,10 @@ class WingmanApp(App):
                         approval.remove()
                     except Exception:
                         pass
-                self.notify("Generation cancelled", severity="warning", timeout=2)
+                # Show interruption message in chat
+                chat = panel.get_chat_container()
+                chat.mount(Static("[dim #f7768e]Interrupted by the user[/]", classes="info-text"))
+                panel.get_scroll_container().scroll_end(animate=False)
                 event.stop()
                 event.prevent_default()
                 return
@@ -557,7 +560,7 @@ class WingmanApp(App):
             panel.add_image_message("user", text, images_to_send)
         else:
             panel.add_message("user", text)
-        
+
         # Save session immediately after user message
         save_session(panel.session_id, panel.messages)
 
@@ -624,7 +627,6 @@ class WingmanApp(App):
                 kwargs["mcp_servers"] = panel.mcp_servers
             if self.coding_mode:
                 kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
-
 
             # Set session context for checkpoint tracking
             set_current_session(panel.session_id)
@@ -848,37 +850,6 @@ class WingmanApp(App):
                 self.notify("/close to close panel, Ctrl+C to quit", severity="warning", timeout=2.0)
             else:
                 self.notify("Press Ctrl+C again to quit", severity="warning", timeout=1.5)
-
-    def action_stop_generation(self) -> None:
-        """Stop generation if active, otherwise clear input."""
-        panel = self.active_panel
-        if panel and panel._generating:
-            panel._cancel_requested = True
-            panel._generating = False  # Clear immediately
-            self._update_status()
-            # Remove thinking spinners
-            for thinking in panel.query("Thinking"):
-                try:
-                    thinking.remove()
-                except Exception:
-                    pass
-            # Remove pending tool approvals
-            for approval in panel.query("ToolApproval"):
-                try:
-                    approval.remove()
-                except Exception:
-                    pass
-            self.notify("Generation cancelled", severity="warning", timeout=2)
-        elif panel:
-            # Clear the input if not generating
-            try:
-                input_widget = panel.query_one(f"#{panel.panel_id}-prompt", Input)
-                input_widget.value = ""
-                if hasattr(input_widget, "_pasted_content"):
-                    input_widget._pasted_content = None
-                    input_widget._paste_placeholder = None
-            except Exception:
-                pass
 
     def action_background(self) -> None:
         """Request backgrounding of current command (Ctrl+B)."""
@@ -1604,6 +1575,7 @@ def main():
     # Load environment variables from .env file
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except ImportError:
         pass

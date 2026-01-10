@@ -175,6 +175,41 @@ def get_hint_candidates(
     return []
 
 
+def get_hint_candidates_with_desc(
+    value: str,
+    cursor_position: int | None = None,
+) -> list[tuple[str, str]]:
+    """Get command hint candidates with descriptions for the current input.
+
+    Args:
+        value: Current input value.
+        cursor_position: Optional cursor position, defaults to end of input.
+
+    Returns:
+        List of (command, description) tuples for display.
+    """
+    if cursor_position is None:
+        cursor_position = len(value)
+    context = _parse_context(value, cursor_position)
+    if context is None:
+        return []
+
+    if context.active_index == 0:
+        search = context.active.text[1:] if context.active.text.startswith("/") else context.active.text
+        search_lower = search.lower()
+        matches = [
+            (cmd.lstrip("/"), desc)
+            for cmd, desc in COMMANDS
+            if search_lower in cmd.lower() or search_lower in desc.lower()
+        ]
+        if len(matches) == 1 and matches[0][0] == search:
+            return []
+        return matches
+
+    # For non-command hints (options, etc.), return empty descriptions
+    return []
+
+
 @dataclass(frozen=True)
 class _CompletionContext:
     value: str

@@ -142,8 +142,7 @@ class MultilineInput(Input):
             # Check if this looks like an image path - don't collapse those
             text_lower = event.text.lower().strip().strip("'\"")
             is_image = any(text_lower.endswith(ext) for ext in IMAGE_EXTENSIONS) or (
-                text_lower.startswith("file://")
-                and any(ext in text_lower for ext in IMAGE_EXTENSIONS)
+                text_lower.startswith("file://") and any(ext in text_lower for ext in IMAGE_EXTENSIONS)
             )
 
             if is_image:
@@ -241,6 +240,7 @@ class MultilineInput(Input):
                 parts.append(f"[#7aa2f7]{cand}[/]")
         hint.update("  ".join(parts))
 
+
 class ChatMessage(Static):
     """Single chat message."""
 
@@ -258,7 +258,7 @@ class ChatMessage(Static):
 
 
 class Thinking(Static):
-    """Loading indicator with dynamic status label."""
+    """Loading indicator with dynamic status label and elapsed timer."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     IDLE_LABELS = ["Mazing", "Soaring", "Ascending Olympus", "Weaving fate", "Consulting the Oracle"]
@@ -268,13 +268,24 @@ class Thinking(Static):
         self._frame = 0
         self._status: str | None = None
         self._idle_label = random.choice(self.IDLE_LABELS)
+        self._start_time: float = time.time()
 
     def on_mount(self) -> None:
+        self._start_time = time.time()
         self.set_interval(0.08, self._tick)
 
     def _tick(self) -> None:
         self._frame = (self._frame + 1) % len(self.FRAMES)
         self.refresh()
+
+    def _format_elapsed(self) -> str:
+        """Format elapsed time as a human-readable string."""
+        elapsed = int(time.time() - self._start_time)
+        if elapsed < 60:
+            return f"{elapsed}s"
+        minutes = elapsed // 60
+        seconds = elapsed % 60
+        return f"{minutes}m {seconds}s"
 
     def set_status(self, status: str | None) -> None:
         """Update the status label (e.g., 'Reading config.py')."""
@@ -283,9 +294,10 @@ class Thinking(Static):
 
     def render(self) -> Text:
         spinner = f"[#e0af68]{self.FRAMES[self._frame]}[/]"
+        hint = f"[dim #565f89]({self._format_elapsed()} · esc to interrupt)[/]"
         if self._status:
-            return Text.from_markup(f"{spinner} [#a9b1d6]{escape(self._status)}[/]")
-        return Text.from_markup(f"{spinner} [dim #a9b1d6]{self._idle_label}...[/]")
+            return Text.from_markup(f"{spinner} [#a9b1d6]{escape(self._status)}[/]  {hint}")
+        return Text.from_markup(f"{spinner} [dim #a9b1d6]{self._idle_label}...[/]  {hint}")
 
 
 class StreamingText(Static):
@@ -648,6 +660,9 @@ class ChatPanel(Vertical):
     def add_message(self, role: str, content: str) -> None:
         self.messages.append({"role": role, "content": content})
         chat = self.get_chat_container()
+        # Add separator before user messages to distinguish from previous response
+        if role == "user" and len(self.messages) > 1:
+            chat.mount(Static("[dim #3d59a1]───[/]", classes="message-separator"))
         chat.mount(ChatMessage(role, content))
         self.get_scroll_container().scroll_end(animate=False)
 
@@ -655,6 +670,9 @@ class ChatPanel(Vertical):
         msg = create_image_message_from_cache(text, images)
         self.messages.append(msg)
         chat = self.get_chat_container()
+        # Add separator before user messages to distinguish from previous response
+        if role == "user" and len(self.messages) > 1:
+            chat.mount(Static("[dim #3d59a1]───[/]", classes="message-separator"))
         img_indicator = f" [#7dcfff][{len(images)} image{'s' if len(images) != 1 else ''}][/]"
         display_text = (text or "(image)") + img_indicator
         chat.mount(ChatMessage(role, display_text))

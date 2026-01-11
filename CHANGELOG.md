@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3](https://github.com/dedalus-labs/wingman/compare/v0.4.2...v0.4.3) (2026-01-11)
+
+
+### Bug Fixes
+
+* remove redundant api key prefix validation ([25e3476](https://github.com/dedalus-labs/wingman/commit/25e34766d0f02b0a2a0509275c9aa15744bb6943))
+
 ## [0.4.2](https://github.com/dedalus-labs/wingman/compare/v0.4.1...v0.4.2) (2026-01-09)
 
 

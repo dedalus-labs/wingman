@@ -53,13 +53,6 @@ class APIKeyScreen(ModalScreen[str | None]):
         status.update("Validating...")
         status.set_classes("validating")
 
-        if not key.startswith("dsk_"):
-            status.update("Invalid key format. Key must start with dsk_")
-            status.set_classes("error")
-            input_widget.disabled = False
-            input_widget.focus()
-            return
-
         try:
             client = AsyncDedalus(api_key=key)
             await client.models.list()

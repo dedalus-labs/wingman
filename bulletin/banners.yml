@@ -10,7 +10,7 @@ version: 1
 messages:
   - id: "beta-free-models"
     type: banner
-    content: "Use any model for [bold]FREE[/bold] until Jan 12th, 2026."
+    content: "Use any model for [bold]FREE[/bold] until Jan 18th, 2026."
     conditions:
-      until: "2026-01-12T23:59:59Z"
+      until: "2026-01-18T23:59:59Z"
     priority: 100

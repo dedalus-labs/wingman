@@ -322,8 +322,8 @@ def _read_file_impl(
         return output
 
 
-def _write_file_impl(path: str, content: str, working_dir: Path, panel_id: str | None = None) -> str:
-    """Create a new file with the given content."""
+def _write_file_impl(path: str, content: str, working_dir: Path, panel_id: str | None = None, overwrite: bool = False) -> str:
+    """Create or overwrite a file with the given content."""
     global _command_widget_counter
     file_path = Path(path)
     if not file_path.is_absolute():
@@ -336,8 +336,9 @@ def _write_file_impl(path: str, content: str, working_dir: Path, panel_id: str |
     command = f"write {display_path}"
     _notify_mount(command, widget_id, panel_id)
 
-    if file_path.exists():
-        output = f"Error: File already exists: {path}. Use edit_file to modify existing files."
+    exists = file_path.exists()
+    if exists and not overwrite:
+        output = f"Error: File already exists: {path}. Use overwrite=True or edit_file to modify."
         _notify_status(widget_id, "error", panel_id=panel_id)
         _track_tool_call(command, output, "error", panel_id)
         return output
@@ -345,10 +346,11 @@ def _write_file_impl(path: str, content: str, working_dir: Path, panel_id: str |
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
         lines = len(content.split("\n"))
-        output_preview = f"Created ({lines} lines)"
+        action = "Overwritten" if exists else "Created"
+        output_preview = f"{action} ({lines} lines)"
         _notify_status(widget_id, "success", output_preview, panel_id)
         _track_tool_call(command, output_preview, "success", panel_id)
-        return f"Created: {path}"
+        return f"{action}: {path}"
     except OSError as e:
         output = f"Error writing file: {e}"
         _notify_status(widget_id, "error", str(e), panel_id)
@@ -363,6 +365,7 @@ def _edit_file_impl(
     working_dir: Path,
     panel_id: str | None = None,
     session_id: str | None = None,
+    replace_all: bool = False,
 ) -> str:
     """Edit a file by replacing old_string with new_string."""
     global _edit_approval_event, _edit_approval_result, _pending_edit, _command_widget_counter
@@ -398,6 +401,7 @@ def _edit_file_impl(
                 "path": str(file_path),
                 "old_string": old_string,
                 "new_string": new_string,
+                "replace_all": replace_all,
             }
             _app_instance.call_from_thread(_app_instance.show_diff_approval)
             _edit_approval_event.wait()
@@ -411,11 +415,17 @@ def _edit_file_impl(
         cp_manager = get_checkpoint_manager()
         cp = cp_manager.create([file_path], f"Before edit: {file_path.name}", session_id=session_id)
 
-        new_content = content.replace(old_string, new_string, 1)
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            count = content.count(old_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            count = 1
         file_path.write_text(new_content)
 
         cp_note = f" (checkpoint: {cp.id})" if cp else ""
-        result = f"Edited: {path}{cp_note}"
+        count_note = f" ({count} replacements)" if replace_all and count > 1 else ""
+        result = f"Edited: {path}{count_note}{cp_note}"
         _notify_status(widget_id, "success", "edited", panel_id)
         _track_tool_call(command, "edited", "success", panel_id)
         return result
@@ -540,26 +550,88 @@ async def _list_files_impl(pattern: str, path: str, working_dir: Path, panel_id:
         return f"Error listing files: {e}"
 
 
-def _search_files_sync(pattern: str, base: Path, file_pattern: str, working_dir: Path, context: int = 0) -> list[str]:
+def _search_files_sync(
+    pattern: str,
+    base: Path,
+    file_pattern: str,
+    working_dir: Path,
+    context: int = 0,
+    context_before: int | None = None,
+    context_after: int | None = None,
+    output_mode: str = "content",
+    multiline: bool = False,
+    file_type: str | None = None,
+    head_limit: int = 0,
+    offset: int = 0,
+) -> list[str]:
     """Search files using ripgrep (preferred) or grep (fallback)."""
-    rg_result = _try_ripgrep(pattern, base, file_pattern, context)
+    rg_result = _try_ripgrep(
+        pattern, base, file_pattern, context, context_before, context_after,
+        output_mode, multiline, file_type, head_limit, offset
+    )
     if rg_result is not None:
         return rg_result
-    return _search_with_grep(pattern, base, file_pattern, context)
+    return _search_with_grep(pattern, base, file_pattern, context, context_before, context_after, output_mode, head_limit, offset)
 
 
-def _try_ripgrep(pattern: str, base: Path, file_pattern: str, context: int) -> list[str] | None:
+def _try_ripgrep(
+    pattern: str,
+    base: Path,
+    file_pattern: str,
+    context: int,
+    context_before: int | None,
+    context_after: int | None,
+    output_mode: str,
+    multiline: bool,
+    file_type: str | None,
+    head_limit: int,
+    offset: int,
+) -> list[str] | None:
     """Search with ripgrep. Returns None if rg not installed."""
-    cmd = ["rg", "--line-number", "--no-heading", "--color=never", "-i", "-m", str(MAX_SEARCH_RESULTS), pattern]
-    if context > 0:
-        cmd.extend(["-C", str(context)])
+    cmd = ["rg", "--color=never", "-i"]
+
+    # Output mode determines format
+    if output_mode == "files_with_matches":
+        cmd.append("--files-with-matches")
+    elif output_mode == "count":
+        cmd.append("--count")
+    else:
+        # content mode - show line numbers
+        cmd.extend(["--line-number", "--no-heading"])
+
+    # Multiline mode
+    if multiline:
+        cmd.extend(["-U", "--multiline-dotall"])
+
+    # Context lines (only for content mode)
+    if output_mode == "content":
+        if context_before is not None:
+            cmd.extend(["-B", str(context_before)])
+        if context_after is not None:
+            cmd.extend(["-A", str(context_after)])
+        if context > 0 and context_before is None and context_after is None:
+            cmd.extend(["-C", str(context)])
+
+    # File filtering
+    if file_type:
+        cmd.extend(["--type", file_type])
     if file_pattern != "*":
         cmd.extend(["--glob", file_pattern])
-    cmd.append(str(base))
+
+    cmd.extend([pattern, str(base)])
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
         if result.returncode in (0, 1):  # 0=matches, 1=no matches
-            return result.stdout.strip().split("\n") if result.stdout.strip() else []
+            lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            # Apply offset and head_limit
+            if offset > 0:
+                lines = lines[offset:]
+            if head_limit > 0:
+                lines = lines[:head_limit]
+            elif len(lines) > MAX_SEARCH_RESULTS:
+                lines = lines[:MAX_SEARCH_RESULTS] + ["... (truncated)"]
+            return lines
         return None
     except FileNotFoundError:
         return None
@@ -567,25 +639,72 @@ def _try_ripgrep(pattern: str, base: Path, file_pattern: str, context: int) -> l
         return ["... (search timed out)"]
 
 
-def _search_with_grep(pattern: str, base: Path, file_pattern: str, context: int) -> list[str]:
+def _search_with_grep(
+    pattern: str,
+    base: Path,
+    file_pattern: str,
+    context: int,
+    context_before: int | None,
+    context_after: int | None,
+    output_mode: str,
+    head_limit: int,
+    offset: int,
+) -> list[str]:
     """Search with grep (available on all Unix systems)."""
-    cmd = ["grep", "-rni", pattern, str(base)]
-    if context > 0:
-        cmd.insert(1, f"-C{context}")
+    cmd = ["grep", "-rn"]
+
+    # Output mode
+    if output_mode == "files_with_matches":
+        cmd = ["grep", "-rl"]
+    elif output_mode == "count":
+        cmd = ["grep", "-rc"]
+    else:
+        cmd.append("-i")
+
+    # Context (only for content mode)
+    if output_mode == "content":
+        if context_before is not None:
+            cmd.append(f"-B{context_before}")
+        if context_after is not None:
+            cmd.append(f"-A{context_after}")
+        if context > 0 and context_before is None and context_after is None:
+            cmd.append(f"-C{context}")
+
+    cmd.extend([pattern, str(base)])
     if file_pattern != "*":
         cmd.extend(["--include", file_pattern])
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
         if result.stdout:
             lines = result.stdout.strip().split("\n")
-            return lines[:MAX_SEARCH_RESULTS] + (["... (truncated)"] if len(lines) > MAX_SEARCH_RESULTS else [])
+            # Apply offset and head_limit
+            if offset > 0:
+                lines = lines[offset:]
+            if head_limit > 0:
+                lines = lines[:head_limit]
+            elif len(lines) > MAX_SEARCH_RESULTS:
+                lines = lines[:MAX_SEARCH_RESULTS] + ["... (truncated)"]
+            return lines
         return []
     except subprocess.TimeoutExpired:
         return ["... (search timed out)"]
 
 
 async def _search_files_impl(
-    pattern: str, path: str, file_pattern: str, working_dir: Path, panel_id: str | None = None, context: int = 0
+    pattern: str,
+    path: str,
+    file_pattern: str,
+    working_dir: Path,
+    panel_id: str | None = None,
+    context: int = 0,
+    context_before: int | None = None,
+    context_after: int | None = None,
+    output_mode: str = "content",
+    multiline: bool = False,
+    file_type: str | None = None,
+    head_limit: int = 0,
+    offset: int = 0,
 ) -> str:
     """Search for a regex pattern in files."""
     tool = "rg" if _has_ripgrep() else "grep"
@@ -596,7 +715,12 @@ async def _search_files_impl(
         base = working_dir / base
     try:
         results = await asyncio.wait_for(
-            asyncio.to_thread(_search_files_sync, pattern, base, file_pattern, working_dir, context), timeout=30.0
+            asyncio.to_thread(
+                _search_files_sync, pattern, base, file_pattern, working_dir,
+                context, context_before, context_after, output_mode, multiline,
+                file_type, head_limit, offset
+            ),
+            timeout=30.0
         )
         result = "\n".join(results) if results else f"No matches for: {pattern}"
         await _update_command_status(widget_id, "success", result, panel_id)
@@ -766,13 +890,26 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
         # Pass through to impl - 0 offset means start from beginning, limit always honored
         return _read_file_impl(path, working_dir, panel_id, offset if offset > 0 else None, limit)
 
-    def write_file(path: str, content: str) -> str:
-        """Create a new file with the given content."""
-        return _write_file_impl(path, content, working_dir, panel_id)
+    def write_file(path: str, content: str, overwrite: bool = False) -> str:
+        """Write content to a file.
 
-    def edit_file(path: str, old_string: str, new_string: str) -> str:
-        """Edit a file by replacing old_string with new_string."""
-        return _edit_file_impl(path, old_string, new_string, working_dir, panel_id, session_id)
+        Args:
+            path: File path to write.
+            content: Content to write.
+            overwrite: If True, overwrite existing files. Default prevents overwriting.
+        """
+        return _write_file_impl(path, content, working_dir, panel_id, overwrite)
+
+    def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+        """Edit a file by replacing old_string with new_string.
+
+        Args:
+            path: File path to edit.
+            old_string: Text to find and replace.
+            new_string: Replacement text.
+            replace_all: If True, replace all occurrences. Default replaces only first.
+        """
+        return _edit_file_impl(path, old_string, new_string, working_dir, panel_id, session_id, replace_all)
 
     async def list_files(pattern: str = "**/*", path: str = ".") -> str:
         """List files matching a glob pattern."""
@@ -781,10 +918,40 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
         except Exception as e:
             return f"Error listing files: {e}"
 
-    async def search_files(pattern: str, path: str = ".", file_pattern: str = "*", context: int = 0) -> str:
-        """Search for a regex pattern in files. Use context=N to show N lines before/after each match."""
+    async def search_files(
+        pattern: str,
+        path: str = ".",
+        file_pattern: str = "*",
+        context: int = 0,
+        context_before: int | None = None,
+        context_after: int | None = None,
+        output_mode: str = "content",
+        multiline: bool = False,
+        file_type: str | None = None,
+        head_limit: int = 0,
+        offset: int = 0,
+    ) -> str:
+        """Search for a regex pattern in files.
+
+        Args:
+            pattern: Regex pattern to search for.
+            path: Directory to search in (default ".").
+            file_pattern: Glob pattern to filter files (e.g., "*.py").
+            context: Lines of context before and after matches (-C).
+            context_before: Lines before each match (-B), overrides context.
+            context_after: Lines after each match (-A), overrides context.
+            output_mode: "content" (default), "files_with_matches", or "count".
+            multiline: Enable multiline matching (patterns can span lines).
+            file_type: File type filter (e.g., "py", "js", "rust").
+            head_limit: Limit output to first N results (0 = default limit).
+            offset: Skip first N results before applying head_limit.
+        """
         try:
-            return await _search_files_impl(pattern, path, file_pattern, working_dir, panel_id, context)
+            return await _search_files_impl(
+                pattern, path, file_pattern, working_dir, panel_id, context,
+                context_before, context_after, output_mode, multiline,
+                file_type, head_limit, offset
+            )
         except Exception as e:
             return f"Error searching files: {e}"
 
@@ -824,10 +991,19 @@ CODING_SYSTEM_PROMPT = """You are Wingman, an expert AI coding assistant.
 
 ## Tools Available
 - read_file(path, offset?, limit?): Read file contents with line numbers (e.g. "   1│ code"). Default: first 2000 lines.
-- edit_file(path, old_string, new_string): Replace old_string with new_string. CRITICAL: old_string must match the actual file content - do NOT include line numbers from read output. Only use content after the "│" character.
-- write_file: Create new files only
+- edit_file(path, old_string, new_string, replace_all?): Replace old_string with new_string. Use replace_all=True to replace all occurrences. CRITICAL: old_string must match the actual file content - do NOT include line numbers from read output. Only use content after the "│" character.
+- write_file(path, content, overwrite?): Write content to a file. Use overwrite=True to replace existing files.
 - list_files: Find files with glob patterns
-- search_files(pattern, path?, file_pattern?, context?): Search file contents with regex. Use context=N to show N lines before/after each match.
+- search_files: Search file contents with regex. Options:
+  - pattern: Regex pattern to search
+  - path: Directory to search (default ".")
+  - file_pattern: Glob filter (e.g., "*.py")
+  - context: Lines before/after matches (-C)
+  - context_before/context_after: Asymmetric context (-B/-A)
+  - output_mode: "content" (default), "files_with_matches", or "count"
+  - multiline: True to match across lines
+  - file_type: Filter by type (e.g., "py", "js")
+  - head_limit: Limit results, offset: Skip first N results
 - run_command: Execute shell commands (user can press Ctrl+B to background)
 - get_process_output: Check output from backgrounded processes
 - stop_process: Stop a background process
@@ -860,7 +1036,7 @@ When a command is backgrounded, you'll see "[Backgrounded: bg_X]". Use get_proce
 # --- Headless mode implementations (no TUI, auto-approve) ---
 
 
-def _edit_file_impl_headless(path: str, old_string: str, new_string: str, working_dir: Path) -> str:
+def _edit_file_impl_headless(path: str, old_string: str, new_string: str, working_dir: Path, replace_all: bool = False) -> str:
     """Edit a file - headless mode (auto-approve, no checkpoints)."""
     file_path = Path(path)
     if not file_path.is_absolute():
@@ -875,9 +1051,15 @@ def _edit_file_impl_headless(path: str, old_string: str, new_string: str, workin
         if old_string not in content:
             return "Edit failed - text not found. Re-read the file and try again."
 
-        new_content = content.replace(old_string, new_string, 1)
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            count = content.count(old_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            count = 1
         file_path.write_text(new_content)
-        return f"Edited: {path}"
+        count_note = f" ({count} replacements)" if replace_all and count > 1 else ""
+        return f"Edited: {path}{count_note}"
     except OSError as e:
         return f"Error editing file: {e}"
 
@@ -936,21 +1118,37 @@ def create_tools_headless(working_dir: Path) -> list:
         """Read file contents. Default: first 2000 lines."""
         return _read_file_impl(path, working_dir, None, offset, limit)
 
-    def write_file(path: str, content: str) -> str:
-        """Create a new file with the given content."""
-        return _write_file_impl(path, content, working_dir, None)
+    def write_file(path: str, content: str, overwrite: bool = False) -> str:
+        """Write content to a file."""
+        return _write_file_impl(path, content, working_dir, None, overwrite)
 
-    def edit_file(path: str, old_string: str, new_string: str) -> str:
+    def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
         """Edit a file by replacing old_string with new_string."""
-        return _edit_file_impl_headless(path, old_string, new_string, working_dir)
+        return _edit_file_impl_headless(path, old_string, new_string, working_dir, replace_all)
 
     async def list_files(pattern: str = "**/*", path: str = ".") -> str:
         """List files matching a glob pattern."""
         return await _list_files_impl(pattern, path, working_dir, None)
 
-    async def search_files(pattern: str, path: str = ".", file_pattern: str = "*", context: int = 0) -> str:
+    async def search_files(
+        pattern: str,
+        path: str = ".",
+        file_pattern: str = "*",
+        context: int = 0,
+        context_before: int | None = None,
+        context_after: int | None = None,
+        output_mode: str = "content",
+        multiline: bool = False,
+        file_type: str | None = None,
+        head_limit: int = 0,
+        offset: int = 0,
+    ) -> str:
         """Search for a regex pattern in files."""
-        return await _search_files_impl(pattern, path, file_pattern, working_dir, None, context)
+        return await _search_files_impl(
+            pattern, path, file_pattern, working_dir, None, context,
+            context_before, context_after, output_mode, multiline,
+            file_type, head_limit, offset
+        )
 
     async def run_command(command: str) -> str:
         """Run a shell command and return the output."""

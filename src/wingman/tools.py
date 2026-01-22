@@ -1,6 +1,7 @@
 """File and shell tools for coding assistance."""
 
 import asyncio
+import json
 import select
 import subprocess
 import threading
@@ -433,6 +434,248 @@ def _edit_file_impl(
         output = f"Error editing file: {e}"
         _notify_status(widget_id, "error", str(e), panel_id)
         _track_tool_call(command, str(e), "error", panel_id)
+        return output
+
+
+def _read_notebook_impl(path: str, working_dir: Path, panel_id: str | None = None) -> str:
+    """Read a Jupyter notebook and render cells with outputs."""
+    global _command_widget_counter
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = working_dir / file_path
+    file_path = file_path.resolve()
+
+    _command_widget_counter += 1
+    widget_id = f"cmd-status-{_command_widget_counter}"
+    display_path = path if len(path) <= 40 else "..." + path[-37:]
+    command = f"read notebook {display_path}"
+    _notify_mount(command, widget_id, panel_id)
+
+    if not file_path.exists():
+        output = f"Error: Notebook not found: {file_path}"
+        _notify_status(widget_id, "error", panel_id=panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+
+    if not file_path.suffix == ".ipynb":
+        output = f"Error: Not a notebook file: {file_path}"
+        _notify_status(widget_id, "error", panel_id=panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+
+    try:
+        content = file_path.read_text()
+        notebook = json.loads(content)
+        cells = notebook.get("cells", [])
+
+        formatted = []
+        for i, cell in enumerate(cells):
+            cell_type = cell.get("cell_type", "unknown")
+            source = cell.get("source", [])
+            if isinstance(source, list):
+                source = "".join(source)
+
+            # Cell header
+            formatted.append(f"{'─' * 40}")
+            formatted.append(f"Cell {i} [{cell_type}]")
+            formatted.append(f"{'─' * 40}")
+
+            # Source with line numbers
+            for j, line in enumerate(source.split("\n"), start=1):
+                if len(line) > MAX_LINE_LENGTH:
+                    line = line[:MAX_LINE_LENGTH] + "..."
+                formatted.append(f"{j:4}│ {line}")
+
+            # Outputs (for code cells)
+            if cell_type == "code":
+                outputs = cell.get("outputs", [])
+                if outputs:
+                    formatted.append("")
+                    formatted.append("Output:")
+                    for out in outputs:
+                        out_type = out.get("output_type", "")
+                        if out_type == "stream":
+                            text = out.get("text", [])
+                            if isinstance(text, list):
+                                text = "".join(text)
+                            formatted.append(text.rstrip())
+                        elif out_type == "execute_result":
+                            data = out.get("data", {})
+                            if "text/plain" in data:
+                                text = data["text/plain"]
+                                if isinstance(text, list):
+                                    text = "".join(text)
+                                formatted.append(text.rstrip())
+                        elif out_type == "error":
+                            ename = out.get("ename", "Error")
+                            evalue = out.get("evalue", "")
+                            formatted.append(f"{ename}: {evalue}")
+                        elif out_type == "display_data":
+                            data = out.get("data", {})
+                            if "text/plain" in data:
+                                text = data["text/plain"]
+                                if isinstance(text, list):
+                                    text = "".join(text)
+                                formatted.append(text.rstrip())
+                            elif "image/png" in data:
+                                formatted.append("[Image output]")
+
+            formatted.append("")
+
+        result = "\n".join(formatted)
+        output_preview = f"{len(cells)} cells"
+        _notify_status(widget_id, "success", output_preview, panel_id)
+        tracked = result if len(result) < CONTENT_TRUNCATE_LIMIT else result[:CONTENT_TRUNCATE_LIMIT] + "\n...[truncated]"
+        _track_tool_call(command, tracked, "success", panel_id)
+        return result
+
+    except json.JSONDecodeError as e:
+        output = f"Error parsing notebook JSON: {e}"
+        _notify_status(widget_id, "error", str(e), panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+    except (OSError, KeyError) as e:
+        output = f"Error reading notebook: {e}"
+        _notify_status(widget_id, "error", str(e), panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+
+
+def _notebook_edit_impl(
+    path: str,
+    cell_number: int,
+    new_source: str,
+    working_dir: Path,
+    panel_id: str | None = None,
+    session_id: str | None = None,
+    edit_mode: str = "replace",
+    cell_type: str | None = None,
+) -> str:
+    """Edit a Jupyter notebook cell."""
+    global _command_widget_counter
+
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = working_dir / file_path
+    file_path = file_path.resolve()
+
+    _command_widget_counter += 1
+    widget_id = f"cmd-status-{_command_widget_counter}"
+    display_path = path if len(path) <= 40 else "..." + path[-37:]
+    command = f"notebook {edit_mode} {display_path}[{cell_number}]"
+    _notify_mount(command, widget_id, panel_id)
+
+    if not file_path.exists():
+        output = f"Error: Notebook not found: {file_path}"
+        _notify_status(widget_id, "error", panel_id=panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+
+    if not file_path.suffix == ".ipynb":
+        output = f"Error: Not a notebook file: {file_path}"
+        _notify_status(widget_id, "error", panel_id=panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+
+    try:
+        content = file_path.read_text()
+        notebook = json.loads(content)
+        cells = notebook.get("cells", [])
+
+        if edit_mode == "delete":
+            if cell_number < 0 or cell_number >= len(cells):
+                output = f"Error: Cell {cell_number} out of range (0-{len(cells) - 1})"
+                _notify_status(widget_id, "error", panel_id=panel_id)
+                _track_tool_call(command, output, "error", panel_id)
+                return output
+
+            # Create checkpoint before edit
+            cp_manager = get_checkpoint_manager()
+            cp = cp_manager.create([file_path], f"Before notebook edit: {file_path.name}", session_id=session_id)
+
+            del cells[cell_number]
+            notebook["cells"] = cells
+            file_path.write_text(json.dumps(notebook, indent=1))
+
+            cp_note = f" (checkpoint: {cp.id})" if cp else ""
+            result = f"Deleted cell {cell_number}{cp_note}"
+            _notify_status(widget_id, "success", "deleted", panel_id)
+            _track_tool_call(command, result, "success", panel_id)
+            return result
+
+        elif edit_mode == "insert":
+            if cell_number < 0 or cell_number > len(cells):
+                output = f"Error: Insert position {cell_number} out of range (0-{len(cells)})"
+                _notify_status(widget_id, "error", panel_id=panel_id)
+                _track_tool_call(command, output, "error", panel_id)
+                return output
+
+            if not cell_type:
+                output = "Error: cell_type required for insert mode"
+                _notify_status(widget_id, "error", panel_id=panel_id)
+                _track_tool_call(command, output, "error", panel_id)
+                return output
+
+            # Create checkpoint before edit
+            cp_manager = get_checkpoint_manager()
+            cp = cp_manager.create([file_path], f"Before notebook edit: {file_path.name}", session_id=session_id)
+
+            new_cell = {
+                "cell_type": cell_type,
+                "metadata": {},
+                "source": new_source.split("\n"),
+            }
+            if cell_type == "code":
+                new_cell["outputs"] = []
+                new_cell["execution_count"] = None
+
+            cells.insert(cell_number, new_cell)
+            notebook["cells"] = cells
+            file_path.write_text(json.dumps(notebook, indent=1))
+
+            cp_note = f" (checkpoint: {cp.id})" if cp else ""
+            result = f"Inserted {cell_type} cell at position {cell_number}{cp_note}"
+            _notify_status(widget_id, "success", "inserted", panel_id)
+            _track_tool_call(command, result, "success", panel_id)
+            return result
+
+        else:  # replace
+            if cell_number < 0 or cell_number >= len(cells):
+                output = f"Error: Cell {cell_number} out of range (0-{len(cells) - 1})"
+                _notify_status(widget_id, "error", panel_id=panel_id)
+                _track_tool_call(command, output, "error", panel_id)
+                return output
+
+            # Create checkpoint before edit
+            cp_manager = get_checkpoint_manager()
+            cp = cp_manager.create([file_path], f"Before notebook edit: {file_path.name}", session_id=session_id)
+
+            cells[cell_number]["source"] = new_source.split("\n")
+            if cell_type:
+                cells[cell_number]["cell_type"] = cell_type
+            # Clear outputs when replacing code
+            if cells[cell_number].get("cell_type") == "code":
+                cells[cell_number]["outputs"] = []
+                cells[cell_number]["execution_count"] = None
+
+            notebook["cells"] = cells
+            file_path.write_text(json.dumps(notebook, indent=1))
+
+            cp_note = f" (checkpoint: {cp.id})" if cp else ""
+            result = f"Replaced cell {cell_number}{cp_note}"
+            _notify_status(widget_id, "success", "replaced", panel_id)
+            _track_tool_call(command, result, "success", panel_id)
+            return result
+
+    except json.JSONDecodeError as e:
+        output = f"Error parsing notebook JSON: {e}"
+        _notify_status(widget_id, "error", str(e), panel_id)
+        _track_tool_call(command, output, "error", panel_id)
+        return output
+    except (OSError, KeyError) as e:
+        output = f"Error editing notebook: {e}"
+        _notify_status(widget_id, "error", str(e), panel_id)
+        _track_tool_call(command, output, "error", panel_id)
         return output
 
 
@@ -974,6 +1217,28 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
         """List background processes for this panel."""
         return list_processes(panel_id)
 
+    def read_notebook(path: str) -> str:
+        """Read a Jupyter notebook (.ipynb) and display all cells with outputs."""
+        return _read_notebook_impl(path, working_dir, panel_id)
+
+    def notebook_edit(
+        path: str,
+        cell_number: int,
+        new_source: str,
+        edit_mode: str = "replace",
+        cell_type: str | None = None,
+    ) -> str:
+        """Edit a Jupyter notebook cell.
+
+        Args:
+            path: Path to the .ipynb file.
+            cell_number: 0-indexed cell number to edit.
+            new_source: New content for the cell.
+            edit_mode: "replace" (default), "insert", or "delete".
+            cell_type: Cell type ("code" or "markdown"). Required for insert.
+        """
+        return _notebook_edit_impl(path, cell_number, new_source, working_dir, panel_id, session_id, edit_mode, cell_type)
+
     return [
         read_file,
         write_file,
@@ -984,6 +1249,8 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
         bound_get_process_output,
         bound_stop_process,
         bound_list_processes,
+        read_notebook,
+        notebook_edit,
     ]
 
 
@@ -1008,6 +1275,11 @@ CODING_SYSTEM_PROMPT = """You are Wingman, an expert AI coding assistant.
 - get_process_output: Check output from backgrounded processes
 - stop_process: Stop a background process
 - list_processes: See all background processes
+- read_notebook(path): Read a Jupyter notebook (.ipynb), showing all cells with outputs
+- notebook_edit(path, cell_number, new_source, edit_mode?, cell_type?): Edit notebook cells
+  - cell_number: 0-indexed cell position
+  - edit_mode: "replace" (default), "insert", or "delete"
+  - cell_type: "code" or "markdown" (required for insert)
 
 ## Rules
 1. ALWAYS read a file before editing it
@@ -1062,6 +1334,76 @@ def _edit_file_impl_headless(path: str, old_string: str, new_string: str, workin
         return f"Edited: {path}{count_note}"
     except OSError as e:
         return f"Error editing file: {e}"
+
+
+def _notebook_edit_impl_headless(
+    path: str,
+    cell_number: int,
+    new_source: str,
+    working_dir: Path,
+    edit_mode: str = "replace",
+    cell_type: str | None = None,
+) -> str:
+    """Edit a Jupyter notebook cell - headless mode (no checkpoints)."""
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = working_dir / file_path
+    file_path = file_path.resolve()
+
+    if not file_path.exists():
+        return f"Error: Notebook not found: {file_path}"
+
+    if not file_path.suffix == ".ipynb":
+        return f"Error: Not a notebook file: {file_path}"
+
+    try:
+        content = file_path.read_text()
+        notebook = json.loads(content)
+        cells = notebook.get("cells", [])
+
+        if edit_mode == "delete":
+            if cell_number < 0 or cell_number >= len(cells):
+                return f"Error: Cell {cell_number} out of range (0-{len(cells) - 1})"
+            del cells[cell_number]
+            notebook["cells"] = cells
+            file_path.write_text(json.dumps(notebook, indent=1))
+            return f"Deleted cell {cell_number}"
+
+        elif edit_mode == "insert":
+            if cell_number < 0 or cell_number > len(cells):
+                return f"Error: Insert position {cell_number} out of range (0-{len(cells)})"
+            if not cell_type:
+                return "Error: cell_type required for insert mode"
+            new_cell = {
+                "cell_type": cell_type,
+                "metadata": {},
+                "source": new_source.split("\n"),
+            }
+            if cell_type == "code":
+                new_cell["outputs"] = []
+                new_cell["execution_count"] = None
+            cells.insert(cell_number, new_cell)
+            notebook["cells"] = cells
+            file_path.write_text(json.dumps(notebook, indent=1))
+            return f"Inserted {cell_type} cell at position {cell_number}"
+
+        else:  # replace
+            if cell_number < 0 or cell_number >= len(cells):
+                return f"Error: Cell {cell_number} out of range (0-{len(cells) - 1})"
+            cells[cell_number]["source"] = new_source.split("\n")
+            if cell_type:
+                cells[cell_number]["cell_type"] = cell_type
+            if cells[cell_number].get("cell_type") == "code":
+                cells[cell_number]["outputs"] = []
+                cells[cell_number]["execution_count"] = None
+            notebook["cells"] = cells
+            file_path.write_text(json.dumps(notebook, indent=1))
+            return f"Replaced cell {cell_number}"
+
+    except json.JSONDecodeError as e:
+        return f"Error parsing notebook JSON: {e}"
+    except (OSError, KeyError) as e:
+        return f"Error editing notebook: {e}"
 
 
 async def _run_command_impl_headless(command: str, working_dir: Path, timeout: int = 120) -> str:
@@ -1154,4 +1496,18 @@ def create_tools_headless(working_dir: Path) -> list:
         """Run a shell command and return the output."""
         return await _run_command_impl_headless(command, working_dir)
 
-    return [read_file, write_file, edit_file, list_files, search_files, run_command]
+    def read_notebook(path: str) -> str:
+        """Read a Jupyter notebook (.ipynb) and display all cells with outputs."""
+        return _read_notebook_impl(path, working_dir, None)
+
+    def notebook_edit(
+        path: str,
+        cell_number: int,
+        new_source: str,
+        edit_mode: str = "replace",
+        cell_type: str | None = None,
+    ) -> str:
+        """Edit a Jupyter notebook cell."""
+        return _notebook_edit_impl_headless(path, cell_number, new_source, working_dir, edit_mode, cell_type)
+
+    return [read_file, write_file, edit_file, list_files, search_files, run_command, read_notebook, notebook_edit]

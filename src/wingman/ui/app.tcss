@@ -88,6 +88,11 @@ StreamingText {
     margin: 0 0 1 0;
 }
 
+.message-separator {
+    height: auto;
+    margin: 1 0;
+}
+
 .hidden {
     display: none;
 }
@@ -220,6 +225,7 @@ ChatPanel.active-panel {
 .panel-prompt {
     background: #24283b;
     border: none;
+    padding: 1 2;
 }
 
 .panel-hint {

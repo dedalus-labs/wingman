@@ -16,7 +16,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static, Tree
 
 from .checkpoints import get_checkpoint_manager, set_current_session
-from .command_completion import get_hint_candidates
+from .command_completion import get_hint_candidates_with_desc
 from .config import (
     APP_CREDIT,
     APP_NAME,
@@ -491,13 +491,21 @@ class WingmanApp(App):
             cycle = getattr(event.input, "_completion_cycle", None)
             if cycle and cycle.is_active_for(text, event.input.cursor_position):
                 return
-            matches = get_hint_candidates(text, event.input.cursor_position)
-            formatted = "  ".join(f"[#7aa2f7]{cmd}[/]" for cmd in matches)
-            hint.update(formatted if formatted else "")
+            matches = get_hint_candidates_with_desc(text, event.input.cursor_position)
+            # Use the input's hint system for arrow key navigation
+            if hasattr(event.input, "set_hint_candidates"):
+                event.input.set_hint_candidates(matches)
+            else:
+                hint.update("")
         elif panel.pending_images:
+            if hasattr(event.input, "_clear_hints"):
+                event.input._clear_hints()
             hint.update("[dim]↑ to select images · backspace to remove[/]")
         else:
-            hint.update("")
+            if hasattr(event.input, "_clear_hints"):
+                event.input._clear_hints()
+            else:
+                hint.update("")
 
     @on(Input.Submitted, ".panel-prompt")
     def on_submit(self, event: Input.Submitted) -> None:

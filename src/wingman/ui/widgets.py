@@ -91,6 +91,7 @@ class MultilineInput(Input):
     """Input that joins pasted multi-line text, clears on escape, and collapses long pastes."""
 
     LONG_PASTE_THRESHOLD = 200
+    MAX_VISIBLE_HINTS = 10
 
     BINDINGS = [
         Binding("ctrl+a", "select_all", "Select All", show=False),
@@ -101,17 +102,125 @@ class MultilineInput(Input):
         self._pasted_content: str | None = None
         self._paste_placeholder: str | None = None
         self._completion_cycle: _CompletionCycle | None = None
+        self._hint_candidates: list[tuple[str, str]] = []  # (command, description)
+        self._hint_index: int = -1  # -1 means no selection
 
     def _on_key(self, event) -> None:
+        # Handle arrow keys for hint navigation when showing command hints
+        if self._hint_candidates and event.key in ("up", "down"):
+            if event.key == "up":
+                if self._hint_index <= 0:
+                    self._hint_index = len(self._hint_candidates) - 1
+                else:
+                    self._hint_index -= 1
+            else:  # down
+                if self._hint_index >= len(self._hint_candidates) - 1:
+                    self._hint_index = 0
+                else:
+                    self._hint_index += 1
+            self._update_hint_display()
+            event.stop()
+            event.prevent_default()
+            return
+
+        # Handle tab/enter to select highlighted hint
+        if self._hint_candidates and self._hint_index >= 0 and event.key in ("tab", "enter"):
+            selected_cmd, _ = self._hint_candidates[self._hint_index]
+            # Apply the selected command
+            self.value = f"/{selected_cmd} "
+            self.cursor_position = len(self.value)
+            self._clear_hints()
+            event.stop()
+            event.prevent_default()
+            return
+
         if event.key == "tab" and self._handle_tab_completion():
             event.stop()
             event.prevent_default()
             return
         if event.key != "tab":
             self._completion_cycle = None
+        # Clear hint selection on other keys (but hints will be repopulated by Changed event)
+        if event.key not in ("up", "down", "tab", "enter"):
+            self._hint_index = -1
         # Let typing proceed normally - user can type after the placeholder
         # Content will be expanded on submit via get_submit_value()
         super()._on_key(event)
+
+    def set_hint_candidates(self, candidates: list[tuple[str, str]]) -> None:
+        """Set the current hint candidates for arrow navigation.
+
+        Args:
+            candidates: List of (command, description) tuples.
+        """
+        # Preserve index if candidates are the same (avoid resetting during navigation)
+        if candidates == self._hint_candidates:
+            return
+        self._hint_candidates = candidates
+        if not candidates:
+            self._hint_index = -1
+        else:
+            # Reset index only if candidates changed
+            self._hint_index = -1
+        self._update_hint_display()
+
+    def _clear_hints(self) -> None:
+        """Clear hint state."""
+        self._hint_candidates = []
+        self._hint_index = -1
+        panel = self._get_panel()
+        if panel:
+            panel.get_hint().update("")
+
+    def _update_hint_display(self) -> None:
+        """Update the hint display with current candidates and selection."""
+        panel = self._get_panel()
+        if not panel:
+            return
+        hint = panel.get_hint()
+        if not self._hint_candidates:
+            hint.update("")
+            return
+
+        total = len(self._hint_candidates)
+        max_visible = self.MAX_VISIBLE_HINTS
+
+        # Calculate viewport window that follows the selection
+        if total <= max_visible:
+            start = 0
+            end = total
+        else:
+            # Keep selection visible by adjusting window
+            if self._hint_index < 0:
+                start = 0
+            else:
+                # Center the selection in the viewport when possible
+                start = max(0, self._hint_index - max_visible // 2)
+                start = min(start, total - max_visible)
+            end = start + max_visible
+
+        parts = []
+
+        # Show "..." at top if there are items above
+        if start > 0:
+            parts.append(f"  [dim]...{start} above[/]")
+
+        # Show visible items with command and description
+        for i in range(start, end):
+            cmd, desc = self._hint_candidates[i]
+            # Pad command to align descriptions
+            padded_cmd = cmd.ljust(12)
+            if i == self._hint_index:
+                parts.append(f"  [bold #9ece6a]> {padded_cmd}[/] [dim]{desc}[/]")
+            else:
+                parts.append(f"  [#7aa2f7]{padded_cmd}[/] [dim]{desc}[/]")
+
+        # Show "..." at bottom if there are more items
+        if end < total:
+            remaining = total - end
+            parts.append(f"  [dim]... +{remaining} more[/]")
+
+        hint.update("\n".join(parts))
 
     def _handle_tab_completion(self) -> bool:
         if not self.value.lstrip().startswith("/"):

@@ -6,7 +6,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-from dedalus_labs import AsyncDedalus, DedalusRunner
+from dedalus_labs import AsyncDedalus, AuthenticationError, DedalusRunner
 from rich.markup import escape
 from rich.text import Text
 from textual import events, on, work
@@ -740,6 +740,44 @@ class WingmanApp(App):
                 if panel.messages and panel.messages[-1].get("role") == "user":
                     panel.messages.pop()
             self._show_info("[#f7768e]Request timed out[/]")
+
+        except AuthenticationError as e:
+            try:
+                thinking.remove()
+            except Exception:
+                pass
+            for sw in self.query(StreamingText):
+                try:
+                    sw.remove()
+                except Exception:
+                    pass
+            if panel.messages and panel.messages[-1].get("role") == "user":
+                panel.messages.pop()
+
+            connect_url = None
+            if isinstance(e.body, dict):
+                connect_url = e.body.get("connect_url") or (e.body.get("detail") or {}).get("connect_url")
+
+            if connect_url:
+                webbrowser.open(connect_url)
+                self._show_info("[#7aa2f7]OAuth required - browser opened for authorization[/]")
+
+                def on_oauth_modal_result(result: str | None) -> None:
+                    if result == "Retry":
+                        panel.messages.append({"role": "user", "content": text})
+                        save_session(panel.session_id, panel.messages)
+                        panel.add_message("user", text)
+                        new_thinking = Thinking(id="thinking")
+                        panel.get_chat_container().mount(new_thinking)
+                        panel.get_scroll_container().scroll_end(animate=False)
+                        self._send_message(panel, text, new_thinking, images)
+
+                self.push_screen(
+                    SelectionModal("Complete OAuth in browser, then:", ["Retry", "Cancel"]),
+                    on_oauth_modal_result,
+                )
+            else:
+                panel.add_message("assistant", f"Authentication error: {e.message}")
 
         except Exception as e:
             # Clean up thinking spinner

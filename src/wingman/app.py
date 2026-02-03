@@ -27,6 +27,7 @@ from .config import (
     load_api_key,
     load_instructions,
 )
+from .analytics import log_usage, format_stats_display, rename_session_usage
 from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
@@ -553,6 +554,10 @@ class WingmanApp(App):
         panel.pending_images = []
         panel.refresh_image_chips()  # Clear chips display
 
+        # Clear ephemeral info widgets
+        for widget in panel.get_chat_container().query(".info-text"):
+            widget.remove()
+
         if images_to_send:
             panel.add_image_message("user", text, images_to_send)
         else:
@@ -645,11 +650,21 @@ class WingmanApp(App):
                 # Stream manager has __aenter__ but not __aiter__
                 if hasattr(stream, "__aenter__") and not hasattr(stream, "__aiter__"):
                     # Event API stream (e.g., Gemini)
+                    event_usage = None
                     async with stream as event_stream:
                         async for event in event_stream:
                             if panel._cancel_requested:
                                 was_cancelled = True
                                 break
+
+                            # Capture usage from event stream
+                            if hasattr(event, "usage") and event.usage:
+                                usage_obj = event.usage
+                                if hasattr(usage_obj, "model_dump"):
+                                    event_usage = usage_obj.model_dump()
+                                elif isinstance(usage_obj, dict):
+                                    event_usage = usage_obj
+
                             # Handle content.delta events
                             if hasattr(event, "type") and event.type == "content.delta":
                                 content = getattr(event, "delta", None)
@@ -667,12 +682,32 @@ class WingmanApp(App):
                                     streaming_widget.append_text(content)
                                     panel.get_scroll_container().scroll_end(animate=False)
                                     await asyncio.sleep(0)
+
+                    # Record actual token usage from API
+                    if event_usage:
+                        panel.context.record_usage(event_usage)
+                        log_usage(
+                            model=self.model,
+                            prompt_tokens=event_usage.get("prompt_tokens", 0),
+                            completion_tokens=event_usage.get("completion_tokens", 0),
+                            session_id=panel.session_id,
+                        )
                 else:
                     # Raw chunk iterator (OpenAI-style)
+                    stream_usage = None
                     async for chunk in stream:
                         if panel._cancel_requested:
                             was_cancelled = True
                             break
+
+                        # Capture usage from final chunk
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            usage_obj = chunk.usage
+                            if hasattr(usage_obj, "model_dump"):
+                                stream_usage = usage_obj.model_dump()
+                            elif isinstance(usage_obj, dict):
+                                stream_usage = usage_obj
+
                         if hasattr(chunk, "choices") and chunk.choices:
                             delta = chunk.choices[0].delta
 
@@ -697,6 +732,16 @@ class WingmanApp(App):
                                 streaming_widget.append_text(delta.content)
                                 panel.get_scroll_container().scroll_end(animate=False)
                                 await asyncio.sleep(0)
+
+                    # Record actual token usage from API
+                    if stream_usage:
+                        panel.context.record_usage(stream_usage)
+                        log_usage(
+                            model=self.model,
+                            prompt_tokens=stream_usage.get("prompt_tokens", 0),
+                            completion_tokens=stream_usage.get("completion_tokens", 0),
+                            session_id=panel.session_id,
+                        )
             finally:
                 panel._generating = False
                 set_current_session(None)
@@ -1106,6 +1151,7 @@ class WingmanApp(App):
         elif arg:
             if rename_session(panel.session_id, arg):
                 old_name = panel.session_id
+                rename_session_usage(old_name, arg)
                 panel.session_id = arg
                 self._refresh_sessions()
                 self._update_status()
@@ -1432,6 +1478,9 @@ Useful for: API patterns, file locations, conventions.
             ),
             "bug": lambda: self._open_github_issue("bug_report.yml"),
             "feature": lambda: self._open_github_issue("feature_request.yml"),
+            "stats": lambda: self._show_info(
+                format_stats_display(self.active_panel.session_id if arg == "session" and self.active_panel else None)
+            ),
         }
 
         # Commands with complex logic
@@ -1617,6 +1666,8 @@ Useful for: API patterns, file locations, conventions.
 [bold #a9b1d6]Config[/]
   [#7aa2f7]/model[/]          Switch model
   [#7aa2f7]/context[/]        Show context usage
+  [#7aa2f7]/stats[/]          Usage analytics
+  [#7aa2f7]/stats session[/]  This session only
 
 [bold #a9b1d6]App[/]
   [#7aa2f7]/exit[/]           Quit Wingman

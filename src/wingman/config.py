@@ -103,6 +103,7 @@ COMMANDS = [
     ("/diff", "Show changes"),
     ("/compact", "Compact context"),
     ("/context", "Context usage"),
+    ("/stats", "Usage analytics"),
     ("/mcp", "MCP servers"),
     ("/memory", "Project memory"),
     ("/export", "Export session"),
@@ -120,6 +121,7 @@ COMMAND_OPTIONS: dict[str, list[str]] = {
     "export": ["json"],
     "memory": ["add", "clear", "delete", "help"],
     "mcp": ["clear"],
+    "stats": ["session"],
 }
 
 

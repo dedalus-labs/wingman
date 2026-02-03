@@ -251,7 +251,14 @@ class ChatMessage(Static):
 
     def compose(self) -> ComposeResult:
         if self.role == "user":
-            yield Static(Text.from_markup(f"[#7aa2f7]>[/] {escape(self.content)}"))
+            # Check for image indicator suffix and preserve its markup
+            if "[#7dcfff][" in self.content and " image" in self.content:
+                idx = self.content.rfind(" [#7dcfff][")
+                text_part = self.content[:idx] if idx > 0 else "(image)"
+                img_part = self.content[idx:] if idx > 0 else self.content
+                yield Static(Text.from_markup(f"[#7aa2f7]>[/] {escape(text_part)}{img_part}"))
+            else:
+                yield Static(Text.from_markup(f"[#7aa2f7]>[/] {escape(self.content)}"))
         else:
             yield Static(Text.from_markup("[bold #bb9af7]Assistant[/]"))
             yield Static(Markdown(self.content))
@@ -421,18 +428,18 @@ class ImageChip(Static, can_focus=True):
     ]
 
     def __init__(self, name: str, index: int, **kwargs):
-        super().__init__(**kwargs)
         self.image_name = name
         self.index = index
+        display_name = name[:27] + "..." if len(name) > 30 else name
+        super().__init__(f"[#7dcfff]\\[{escape(display_name)}][/]", **kwargs)
 
-    def render(self) -> Text:
-        # Truncate long names
-        display_name = self.image_name
-        if len(display_name) > 30:
-            display_name = display_name[:27] + "..."
-        if self.has_focus:
-            return Text.from_markup(f"[bold #7dcfff]\\[{escape(display_name)}][/]")
-        return Text.from_markup(f"[#7dcfff]\\[{escape(display_name)}][/]")
+    def on_focus(self) -> None:
+        display_name = self.image_name[:27] + "..." if len(self.image_name) > 30 else self.image_name
+        self.update(f"[bold #7dcfff]\\[{escape(display_name)}][/]")
+
+    def on_blur(self) -> None:
+        display_name = self.image_name[:27] + "..." if len(self.image_name) > 30 else self.image_name
+        self.update(f"[#7dcfff]\\[{escape(display_name)}][/]")
 
     def action_remove(self) -> None:
         self.post_message(self.Removed(self.index))

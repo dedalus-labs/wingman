@@ -67,46 +67,13 @@ AUTO_COMPACT_THRESHOLD = 0.85
 COMPACT_TARGET = 0.50
 
 
-def estimate_tokens(text: str) -> int:
-    """Estimate token count (~4 chars per token)."""
-    return len(text) // 4 + 1
-
-
-def estimate_message_tokens(message: dict) -> int:
-    """Estimate tokens for a single message."""
-    # Handle segment-based format
-    if "segments" in message:
-        total = 4
-        for seg in message["segments"]:
-            if seg.get("type") == "text":
-                total += estimate_tokens(seg.get("content", ""))
-            elif seg.get("type") == "tool":
-                # Tool calls add some overhead
-                total += estimate_tokens(seg.get("command", ""))
-                total += estimate_tokens(seg.get("output", ""))
-        return total
-
-    content = message.get("content", "")
-    if isinstance(content, str):
-        return estimate_tokens(content) + 4
-    elif isinstance(content, list):
-        total = 4
-        for part in content:
-            if isinstance(part, dict) and "text" in part:
-                total += estimate_tokens(part["text"])
-            elif isinstance(part, str):
-                total += estimate_tokens(part)
-        return total
-    return 10
-
-
 @dataclass
 class ContextManager:
-    """Manages conversation context and token budgets."""
+    """Manages conversation context and token budgets using actual API usage data."""
 
     model: str = "openai/gpt-4.1"
     messages: list[dict] = field(default_factory=list)
-    _token_cache: dict[int, int] = field(default_factory=dict)
+    _total_tokens: int = 0
 
     @property
     def context_limit(self) -> int:
@@ -114,15 +81,39 @@ class ContextManager:
 
     @property
     def total_tokens(self) -> int:
-        total = 0
-        for i, msg in enumerate(self.messages):
-            if i in self._token_cache:
-                total += self._token_cache[i]
-            else:
-                tokens = estimate_message_tokens(msg)
-                self._token_cache[i] = tokens
-                total += tokens
-        return total
+        return self._total_tokens
+
+    def record_usage(self, usage: dict) -> None:
+        """Record token usage from API response and tag messages with actual counts.
+
+        Each API call returns:
+        - prompt_tokens: all messages sent to the model
+        - completion_tokens: the assistant's response
+        - total_tokens: prompt + completion
+
+        We tag the latest user message with: prompt_tokens - previous_total
+        We tag the latest assistant message with: completion_tokens
+        """
+        if not usage or not isinstance(usage, dict):
+            return
+
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+
+        # Tag latest user message: its tokens = prompt - what we had before
+        for msg in reversed(self.messages):
+            if msg.get("role") == "user" and "_tokens" not in msg:
+                msg["_tokens"] = max(0, prompt_tokens - self._total_tokens)
+                break
+
+        # Tag latest assistant message with completion_tokens
+        for msg in reversed(self.messages):
+            if msg.get("role") == "assistant" and "_tokens" not in msg:
+                msg["_tokens"] = completion_tokens
+                break
+
+        self._total_tokens = total_tokens
 
     @property
     def usage_percent(self) -> float:
@@ -141,11 +132,12 @@ class ContextManager:
 
     def clear(self) -> None:
         self.messages = []
-        self._token_cache = {}
+        self._total_tokens = 0
 
     def set_messages(self, messages: list[dict]) -> None:
         self.messages = messages
-        self._token_cache = {}
+        # Recompute total from stored _tokens, or 0 if none tagged
+        self._total_tokens = sum(m.get("_tokens", 0) for m in messages)
 
     async def compact(self, client: AsyncDedalus) -> str:
         """Compact conversation by summarizing older messages."""
@@ -154,11 +146,15 @@ class ContextManager:
 
         target_tokens = int(self.context_limit * COMPACT_TARGET)
         keep_recent = 4
-        recent_tokens = sum(estimate_message_tokens(m) for m in self.messages[-keep_recent:])
+
+        def get_tokens(msg: dict) -> int:
+            return msg.get("_tokens", 0)
+
+        recent_tokens = sum(get_tokens(m) for m in self.messages[-keep_recent:])
 
         while keep_recent < len(self.messages) - 2:
             next_msg = self.messages[-(keep_recent + 1)]
-            next_tokens = estimate_message_tokens(next_msg)
+            next_tokens = get_tokens(next_msg)
             if recent_tokens + next_tokens > target_tokens * 0.4:
                 break
             recent_tokens += next_tokens
@@ -189,7 +185,7 @@ class ContextManager:
             },
             *recent_messages,
         ]
-        self._token_cache = {}
+        self._total_tokens = 0
 
         return f"Compacted {len(to_summarize)} messages into summary"
 

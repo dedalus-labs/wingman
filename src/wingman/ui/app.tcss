@@ -231,11 +231,13 @@ ChatPanel.active-panel {
 .panel-chips-row {
     height: auto;
     width: 100%;
+    layout: horizontal;
 }
 
 .panel-chips {
     height: auto;
-    width: 1fr;
+    width: auto;
+    layout: horizontal;
 }
 
 .panel-quit-hint {

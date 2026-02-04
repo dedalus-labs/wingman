@@ -573,3 +573,45 @@ DiffModal .hint {
     text-align: center;
     padding-top: 1;
 }
+
+/* --- Credential Modal --- */
+CredentialModal {
+    align: center middle;
+}
+
+CredentialModal > Vertical {
+    width: 60;
+    height: auto;
+    background: #1a1b26;
+    border: solid #e0af68;
+    padding: 1 2;
+}
+
+CredentialModal .title {
+    text-style: bold;
+    color: #7aa2f7;
+    padding-bottom: 1;
+    border-bottom: solid #24283b;
+}
+
+CredentialModal #cred-prompt {
+    padding: 1 0;
+}
+
+CredentialModal Input {
+    margin-top: 1;
+}
+
+CredentialModal Input:focus {
+    border: solid #e0af68;
+}
+
+CredentialModal #cred-progress {
+    padding-top: 1;
+}
+
+CredentialModal .hint {
+    color: #565f89;
+    text-align: center;
+    padding-top: 1;
+}

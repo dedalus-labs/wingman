@@ -48,7 +48,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "dedalus-labs>=0.2.0",
+    "dedalus-labs[auth]>=0.2.0",
+    "dedalus-mcp>=0.5.0",
     "textual>=0.50.0",
     "rich>=13.0.0",
     "httpx>=0.27.0",
@@ -56,6 +57,7 @@ dependencies = [
     "pyyaml>=6.0",
     "orjson>=3.10",
     "python-dotenv>=1.0.0",
+    "keyring>=25.0.0",
 ]
 
 # --- Project URLs ---

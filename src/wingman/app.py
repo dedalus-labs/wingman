@@ -239,6 +239,20 @@ class WingmanApp(App):
         if self.active_panel:
             self.active_panel.show_info(text)
 
+    def _build_mcp_credentials(self, servers: list[str]) -> list:
+        """Build credential objects for servers that have stored credentials."""
+        from .config import get_server_credentials, build_mcp_credentials
+
+        all_credentials = []
+        for server in servers:
+            creds = get_server_credentials(server)
+            if creds:
+                try:
+                    all_credentials.extend(build_mcp_credentials(server, creds))
+                except Exception:
+                    pass  # Skip servers with invalid credentials
+        return all_credentials
+
     def _open_github_issue(self, template: str) -> None:
         """Open GitHub issue page with template."""
         url = f"https://github.com/dedalus-labs/wingman/issues/new?template={template}"
@@ -627,6 +641,9 @@ class WingmanApp(App):
             }
             if panel.mcp_servers:
                 kwargs["mcp_servers"] = panel.mcp_servers
+                credentials = self._build_mcp_credentials(panel.mcp_servers)
+                if credentials:
+                    kwargs["credentials"] = credentials
             if self.coding_mode:
                 kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
 
@@ -1565,11 +1582,14 @@ Useful for: API patterns, file locations, conventions.
         if not panel:
             return
         options = []
+        server_map: dict[str, dict] = {}
         if MARKETPLACE_SERVERS:
             for server in MARKETPLACE_SERVERS:
                 slug = server.get("slug", "")
                 title = server.get("title") or slug.split("/")[-1]
-                options.append(f"{title} ({slug})")
+                label = f"{title} ({slug})"
+                options.append(label)
+                server_map[label] = server
         options.append("+ Custom URL")
 
         result = await self.push_screen_wait(SelectionModal("Add MCP Server", options))
@@ -1582,19 +1602,77 @@ Useful for: API patterns, file locations, conventions.
                     if custom in panel.mcp_servers:
                         self._show_info(f"MCP server already added: {custom}")
                     else:
-                        panel.mcp_servers.append(custom)
-                        self._show_info(f"Added MCP server: {custom}")
-                        self._update_status()
+                        await self._add_mcp_with_credentials(panel, custom, custom)
             else:
-                match = re.search(r"\(([^)]+)\)$", result)
-                if match:
-                    slug = match.group(1)
-                    if slug in panel.mcp_servers:
-                        self._show_info(f"MCP server already added: {slug}")
-                    else:
-                        panel.mcp_servers.append(slug)
-                        self._show_info(f"Added MCP server: {slug}")
-                        self._update_status()
+                server = server_map.get(result)
+                if not server:
+                    return
+                slug = server.get("slug", "")
+                if slug in panel.mcp_servers:
+                    self._show_info(f"MCP server already added: {slug}")
+                    return
+
+                # Check if server requires credentials
+                if server.get("has_dauth"):
+                    await self._add_mcp_with_credentials(panel, slug, server.get("title", slug))
+                else:
+                    panel.mcp_servers.append(slug)
+                    self._show_info(f"Added MCP server: {slug}")
+                    self._update_status()
+
+    async def _add_mcp_with_credentials(self, panel: "ChatPanel", slug: str, title: str) -> None:
+        """Add MCP server that requires credentials."""
+        from .config import fetch_server_metadata, get_server_credentials, save_server_credentials
+        from .ui.modals import CredentialModal
+
+        # Check if we already have credentials stored
+        existing_creds = get_server_credentials(slug)
+        if existing_creds:
+            panel.mcp_servers.append(slug)
+            self._show_info(f"Added MCP server: {slug} (using stored credentials)")
+            self._update_status()
+            return
+
+        # Fetch server metadata to get required credentials
+        self._show_info(f"Fetching credentials info for {title}...")
+        metadata = await fetch_server_metadata(slug)
+        if not metadata:
+            self._show_info(f"[#f7768e]Could not fetch server metadata for {slug}[/]")
+            return
+
+        required_creds_raw = metadata.get("requiredCredentials") or []
+        if not required_creds_raw:
+            panel.mcp_servers.append(slug)
+            self._show_info(f"Added MCP server: {slug}")
+            self._update_status()
+            return
+
+        # Extract credential keys - handle both formats:
+        # ["KEY_NAME"] or [{"key": "KEY_NAME", "value": ""}]
+        required_creds = []
+        for item in required_creds_raw:
+            if isinstance(item, str):
+                required_creds.append(item)
+            elif isinstance(item, dict) and "key" in item:
+                required_creds.append(item["key"])
+
+        if not required_creds:
+            panel.mcp_servers.append(slug)
+            self._show_info(f"Added MCP server: {slug}")
+            self._update_status()
+            return
+
+        # Prompt for credentials
+        cred_values = await self.push_screen_wait(CredentialModal(title, required_creds))
+        if not cred_values:
+            self._show_info("Cancelled - no credentials provided")
+            return
+
+        # Store raw credentials securely in system keyring
+        save_server_credentials(slug, cred_values)
+        panel.mcp_servers.append(slug)
+        self._show_info(f"Added MCP server: {slug} (credentials stored in keyring)")
+        self._update_status()
 
     def action_clear_chat(self) -> None:
         """Clear chat in the active panel."""

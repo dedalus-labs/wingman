@@ -1,11 +1,15 @@
 """Configuration and constants."""
 
+import os
 from importlib.metadata import version
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 
 from .lib import oj
+
+load_dotenv()
 
 # Paths
 CONFIG_DIR = Path.home() / ".wingman"
@@ -224,3 +228,79 @@ async def fetch_marketplace_servers() -> list[dict]:
     except Exception:
         pass
     return []
+
+
+async def fetch_server_metadata(slug: str) -> dict | None:
+    """Fetch detailed server metadata including required credentials."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            owner, name = slug.split("/", 1)
+            resp = await client.get(f"{DEDALUS_SITE_URL}/api/mcps/{owner}/{name}")
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("repository")
+    except Exception:
+        pass
+    return None
+
+
+# Credential storage using system keyring
+KEYRING_SERVICE = "wingman-mcp"
+
+
+def get_server_credentials(slug: str) -> dict[str, str] | None:
+    """Load encrypted credentials for a server from system keyring."""
+    try:
+        import keyring
+        data = keyring.get_password(KEYRING_SERVICE, slug)
+        if data:
+            return oj.loads(data)
+    except Exception:
+        pass
+    return None
+
+
+def save_server_credentials(slug: str, credentials: dict[str, str]) -> None:
+    """Save encrypted credentials for a server to system keyring."""
+    import keyring
+    keyring.set_password(KEYRING_SERVICE, slug, oj.dumps(credentials))
+
+
+def delete_server_credentials(slug: str) -> None:
+    """Delete stored credentials for a server."""
+    try:
+        import keyring
+        keyring.delete_password(KEYRING_SERVICE, slug)
+    except Exception:
+        pass
+
+
+def build_mcp_credentials(slug: str, credentials: dict[str, str]) -> list:
+    """Build credential objects for SDK consumption.
+
+    Args:
+        slug: Server slug (e.g., "windsor/tinker-mcp")
+        credentials: Dict mapping env var names to values (e.g., {"TINKER_API_KEY": "..."})
+
+    Returns:
+        List of SecretValues objects for passing to runner.run(credentials=...)
+    """
+    from dedalus_mcp.auth import Connection, SecretKeys, SecretValues
+
+    if not credentials:
+        return []
+
+    connection_name = slug.replace("/", "-")
+
+    # Use "token" as the field name since values_for_encryption() expects
+    # one of: api_key, key, token, secret, password
+    # The env var name is stored as metadata in SecretKeys.
+    env_var_name = next(iter(credentials.keys()))
+    value = credentials[env_var_name]
+
+    connection = Connection(
+        name=connection_name,
+        secrets=SecretKeys(token=env_var_name),
+    )
+
+    return [SecretValues(connection=connection, token=value)]

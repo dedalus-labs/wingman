@@ -385,3 +385,69 @@ class DiffModal(ModalScreen[bool]):
 
     def action_reject(self) -> None:
         self.dismiss(False)
+
+
+class CredentialModal(ModalScreen[dict[str, str] | None]):
+    """Modal for entering MCP server credentials."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+c", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, server_name: str, required_credentials: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.server_name = server_name
+        self.required_credentials = required_credentials
+        self._current_index = 0
+        self._values: dict[str, str] = {}
+
+    def compose(self):
+        with Vertical():
+            yield Static(
+                Text.from_markup(f"[bold #7aa2f7]Credentials Required[/]\n[dim]{escape(self.server_name)}[/]"),
+                classes="title",
+            )
+            yield Static(
+                Text.from_markup(f"[#a9b1d6]Enter value for:[/] [#e0af68]{self.required_credentials[0]}[/]"),
+                id="cred-prompt",
+            )
+            yield Input(placeholder="Enter credential value...", id="cred-input", password=True)
+            yield Static(
+                Text.from_markup(f"[dim]Credential 1 of {len(self.required_credentials)}[/]"),
+                id="cred-progress",
+            )
+            yield Static(
+                Text.from_markup("[dim]Credentials are encrypted and stored in system keyring[/]"),
+                classes="hint",
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#cred-input", Input).focus()
+
+    @on(Input.Submitted, "#cred-input")
+    def on_submit(self, event: Input.Submitted) -> None:
+        value = event.value.strip()
+        if not value:
+            return
+
+        cred_name = self.required_credentials[self._current_index]
+        self._values[cred_name] = value
+
+        self._current_index += 1
+        if self._current_index >= len(self.required_credentials):
+            self.dismiss(self._values)
+        else:
+            next_cred = self.required_credentials[self._current_index]
+            self.query_one("#cred-prompt", Static).update(
+                Text.from_markup(f"[#a9b1d6]Enter value for:[/] [#e0af68]{next_cred}[/]")
+            )
+            self.query_one("#cred-progress", Static).update(
+                Text.from_markup(f"[dim]Credential {self._current_index + 1} of {len(self.required_credentials)}[/]")
+            )
+            inp = self.query_one("#cred-input", Input)
+            inp.value = ""
+            inp.focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

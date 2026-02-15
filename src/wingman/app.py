@@ -21,6 +21,7 @@ from .config import (
     APP_CREDIT,
     APP_NAME,
     APP_VERSION,
+    DEDALUS_AS_URL,
     MARKETPLACE_SERVERS,
     MODELS,
     fetch_marketplace_servers,
@@ -103,7 +104,7 @@ class WingmanApp(App):
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key."""
-        self.client = AsyncDedalus(api_key=api_key)
+        self.client = AsyncDedalus(api_key=api_key, as_base_url=DEDALUS_AS_URL)
         self.runner = DedalusRunner(self.client)
 
     @property
@@ -240,7 +241,7 @@ class WingmanApp(App):
             self.active_panel.show_info(text)
 
     def _build_mcp_credentials(self, servers: list[str]) -> list:
-        """Build credential objects for servers that have stored credentials."""
+        """Build SecretValues objects for servers that have stored credentials."""
         from .config import get_server_credentials, build_mcp_credentials
 
         all_credentials = []
@@ -250,7 +251,7 @@ class WingmanApp(App):
                 try:
                     all_credentials.extend(build_mcp_credentials(server, creds))
                 except Exception:
-                    pass  # Skip servers with invalid credentials
+                    pass
         return all_credentials
 
     def _open_github_issue(self, template: str) -> None:
@@ -639,11 +640,13 @@ class WingmanApp(App):
                 "model": self.model,
                 "stream": True,
             }
+
             if panel.mcp_servers:
                 kwargs["mcp_servers"] = panel.mcp_servers
                 credentials = self._build_mcp_credentials(panel.mcp_servers)
                 if credentials:
                     kwargs["credentials"] = credentials
+
             if self.coding_mode:
                 kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
 
@@ -828,7 +831,6 @@ class WingmanApp(App):
                     if result == "Retry":
                         panel.messages.append({"role": "user", "content": text})
                         save_session(panel.session_id, panel.messages)
-                        panel.add_message("user", text)
                         new_thinking = Thinking(id="thinking")
                         panel.get_chat_container().mount(new_thinking)
                         panel.get_scroll_container().scroll_end(animate=False)
@@ -1249,6 +1251,8 @@ class WingmanApp(App):
             # Reopen modal with updated list
             if panel.mcp_servers:
                 self._show_mcp_modal()
+        elif action == "credentials" and server:
+            self._update_server_credentials(server)
         elif action == "add":
             self.action_add_mcp()
 
@@ -1673,6 +1677,42 @@ Useful for: API patterns, file locations, conventions.
         panel.mcp_servers.append(slug)
         self._show_info(f"Added MCP server: {slug} (credentials stored in keyring)")
         self._update_status()
+
+    @work(thread=False)
+    async def _update_server_credentials(self, slug: str) -> None:
+        """Update credentials for an existing MCP server."""
+        from .config import fetch_server_metadata, get_server_credentials, save_server_credentials
+        from .ui.modals import CredentialModal
+
+        # Try to get required credential keys from stored creds first
+        existing = get_server_credentials(slug)
+        if existing:
+            required_creds = list(existing.keys())
+        else:
+            # Fall back to fetching metadata
+            metadata = await fetch_server_metadata(slug)
+            if not metadata:
+                self._show_info(f"[#f7768e]Could not fetch metadata for {slug}[/]")
+                return
+            required_creds_raw = metadata.get("requiredCredentials") or []
+            required_creds = []
+            for item in required_creds_raw:
+                if isinstance(item, str):
+                    required_creds.append(item)
+                elif isinstance(item, dict) and "key" in item:
+                    required_creds.append(item["key"])
+
+        if not required_creds:
+            self._show_info(f"No credentials required for {slug}")
+            return
+
+        title = slug.split("/")[-1] if "/" in slug else slug
+        cred_values = await self.push_screen_wait(CredentialModal(title, required_creds))
+        if not cred_values:
+            return
+
+        save_server_credentials(slug, cred_values)
+        self._show_info(f"[#9ece6a]Updated credentials for {slug}[/]")
 
     def action_clear_chat(self) -> None:
         """Clear chat in the active panel."""

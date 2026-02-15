@@ -26,6 +26,7 @@ APP_CREDIT = "Dedalus Labs"
 
 # API
 DEDALUS_SITE_URL = "https://dedaluslabs.ai"
+DEDALUS_AS_URL = os.environ.get("DEDALUS_AS_URL", "https://as.dedaluslabs.ai")
 
 
 # Models (verified in models.dev)
@@ -290,11 +291,12 @@ def build_mcp_credentials(slug: str, credentials: dict[str, str]) -> list:
     if not credentials:
         return []
 
-    connection_name = slug.replace("/", "-")
+    # Use slug as connection name. The SDK's prepare_mcp_request() will
+    # encrypt credentials and embed them into MCPServerSpec before sending.
+    connection_name = slug
 
     # Use "token" as the field name since values_for_encryption() expects
     # one of: api_key, key, token, secret, password
-    # The env var name is stored as metadata in SecretKeys.
     env_var_name = next(iter(credentials.keys()))
     value = credentials[env_var_name]
 
@@ -303,4 +305,5 @@ def build_mcp_credentials(slug: str, credentials: dict[str, str]) -> list:
         secrets=SecretKeys(token=env_var_name),
     )
 
+    # Return SecretValues objects - SDK handles encryption in prepare_mcp_request()
     return [SecretValues(connection=connection, token=value)]

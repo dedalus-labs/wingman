@@ -197,6 +197,7 @@ class MCPModal(ModalScreen[tuple[str, str | None] | None]):
         Binding("escape", "cancel", "Cancel"),
         Binding("q", "cancel", "Cancel"),
         Binding("d", "delete", "Delete"),
+        Binding("c", "credentials", "Credentials"),
         Binding("a", "add", "Add"),
     ]
 
@@ -212,7 +213,7 @@ class MCPModal(ModalScreen[tuple[str, str | None] | None]):
             if self.servers:
                 items = [ListItem(Label(f"{i+1}. {s}"), id=f"mcp-{i}") for i, s in enumerate(self.servers)]
                 yield ListView(*items)
-                yield Static("↑↓ navigate • d delete • a add • Esc/q close", classes="hint")
+                yield Static("↑↓ navigate • d delete • c credentials • a add • Esc/q close", classes="hint")
             else:
                 yield Static("No MCP servers configured.\nUse 'a' to add or Ctrl+G", classes="empty")
                 yield Static("a add • Esc/q close", classes="hint")
@@ -236,13 +237,19 @@ class MCPModal(ModalScreen[tuple[str, str | None] | None]):
             self._pending_delete = True
             self._update_hint()
 
+    def action_credentials(self) -> None:
+        if not self.servers or not (0 <= self._highlighted_idx < len(self.servers)):
+            return
+        server = self.servers[self._highlighted_idx]
+        self.dismiss(("credentials", server))
+
     def _update_hint(self) -> None:
         try:
             hint = self.query_one(".hint", Static)
             if self._pending_delete:
                 hint.update("[#f7768e]Press d again to confirm delete[/] • Esc/q cancel")
             else:
-                hint.update("↑↓ navigate • d delete • a add • Esc/q close")
+                hint.update("↑↓ navigate • d delete • c credentials • a add • Esc/q close")
         except Exception:
             pass
 

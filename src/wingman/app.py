@@ -82,6 +82,8 @@ class WingmanApp(App):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("f1", "help", "Help"),
+        Binding("f2", "toggle_voice", "Listen"),
+        Binding("f3", "open_transcript_bank", "Bank"),
         Binding("ctrl+/", "help", "Help", show=False),
         Binding("ctrl+1", "goto_panel_1", "Panel 1", show=False),
         Binding("ctrl+2", "goto_panel_2", "Panel 2", show=False),
@@ -200,6 +202,14 @@ class WingmanApp(App):
         # Memory indicator
         memory_text = " │ [#bb9af7]MEM[/]" if load_memory().entries else ""
 
+        # Listening / bank indicator
+        if panel and panel._listening:
+            recording_text = f" │ [#f7768e]LISTENING ({len(panel._transcript_bank)})[/]"
+        elif panel and panel._transcript_bank:
+            recording_text = f" │ [#bb9af7]BANK ({len(panel._transcript_bank)})[/]"
+        else:
+            recording_text = ""
+
         # Generating indicator
         generating_text = " │ [#e0af68]Generating...[/]" if panel and panel._generating else ""
 
@@ -215,7 +225,7 @@ class WingmanApp(App):
             cwd_display = str(cwd)
         cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
-        status = f"{session_text} │ {model_short}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
+        status = f"{session_text} │ {model_short}{code_text}{recording_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 
     def _refresh_sessions(self) -> None:
@@ -401,6 +411,11 @@ class WingmanApp(App):
         # Handle escape only when no modal is open
         if event.key == "escape" and len(self.screen_stack) == 1:
             panel = self.active_panel
+            if panel and panel._listening:
+                self._stop_listening(panel)
+                event.stop()
+                event.prevent_default()
+                return
             if panel and panel._generating:
                 panel._cancel_requested = True
                 panel._generating = False  # Clear immediately
@@ -515,6 +530,131 @@ class WingmanApp(App):
         else:
             hint.update("")
 
+    # --- Voice / Listening mode ---
+
+    def action_toggle_voice(self) -> None:
+        """Toggle listening mode on the active panel."""
+        panel = self.active_panel
+        if not panel:
+            return
+        if self.client is None:
+            self._show_info("[#f7768e]Enter your API key first (/key).[/]")
+            return
+        if panel._generating:
+            self.notify("Cannot listen while generating", severity="warning", timeout=2)
+            return
+        if panel._listening:
+            self._stop_listening(panel)
+        else:
+            self._start_listening(panel)
+
+    def _start_listening(self, panel) -> None:
+        """Start listening mode: continuous recording, text accumulates."""
+        try:
+            panel._recorder.start()
+            panel._listening = True
+            panel._current_transcript = ""
+            panel.get_hint().update("[#f7768e]Listening... F2/Esc to stop | F3 to view bank[/]")
+            self._update_status()
+            self._listening_transcribe_loop(panel)
+        except Exception as e:
+            msg = str(e).lower()
+            if "device" in msg or "no" in msg:
+                self._show_info("[#f7768e]No microphone found. Check audio settings.[/]")
+            else:
+                self._show_info(f"[#f7768e]Mic error: {e}[/]")
+
+    def _stop_listening(self, panel) -> None:
+        """Stop listening, transcribe remaining audio, then commit."""
+        panel._listening = False
+        remaining = panel._recorder.drain()
+        panel._recorder.stop()
+        if len(remaining) >= 1000 and self.client:
+            panel.get_hint().update("[#e0af68]Finishing...[/]")
+            self._finalize_listening(panel, remaining)
+        else:
+            self._commit_and_show_bank(panel)
+
+    @work(thread=False)
+    async def _finalize_listening(self, panel, remaining_wav: bytes) -> None:
+        """Transcribe leftover audio and commit the entry."""
+        from .voice import transcribe
+
+        try:
+            text = await transcribe(self.client, remaining_wav)
+            if text and text.strip():
+                panel._current_transcript += " " + text.strip()
+        except Exception:
+            pass
+        self._commit_and_show_bank(panel)
+
+    def _commit_and_show_bank(self, panel) -> None:
+        """Commit transcript and update hint with bank count."""
+        had = len(panel._transcript_bank)
+        panel.commit_transcript()
+        added = len(panel._transcript_bank) > had
+        self._update_status()
+        if added:
+            n = len(panel._transcript_bank)
+            panel.get_hint().update(f"[dim]{n} recording{'s' if n != 1 else ''} in bank. F3 to view.[/]")
+        else:
+            panel.get_hint().update("[dim]No speech detected[/]")
+
+    @work(thread=False)
+    async def _listening_transcribe_loop(self, panel) -> None:
+        """Continuously transcribe audio chunks and append to current transcript."""
+        import asyncio
+
+        from .voice import transcribe
+
+        await asyncio.sleep(2)
+        while self.client and panel._listening:
+            chunk = panel._recorder.drain()
+            if len(chunk) < 1000:
+                await asyncio.sleep(0.5)
+                continue
+            try:
+                text = await transcribe(self.client, chunk)
+                if text and text.strip():
+                    panel._current_transcript += " " + text.strip()
+            except Exception:
+                pass
+            if not panel._listening:
+                break
+            await asyncio.sleep(2)
+
+    @work
+    async def action_open_transcript_bank(self) -> None:
+        """Open the transcript bank modal."""
+        panel = self.active_panel
+        if not panel:
+            return
+        if not panel._transcript_bank:
+            self._show_info("[dim]No recordings in bank. Use F2 to start listening.[/]")
+            return
+        from .ui.modals import TranscriptBankModal
+
+        result = await self.push_screen_wait(TranscriptBankModal(panel._transcript_bank.copy()))
+        if not result:
+            return
+        action, data = result
+        if action == "insert_text" and data:
+            input_widget = panel.get_input()
+            if input_widget.value:
+                input_widget.value += " " + data
+            else:
+                input_widget.value = data
+            input_widget.cursor_position = len(input_widget.value)
+        elif action == "delete" and data:
+            panel.delete_transcript_entry(data)
+            self._update_status()
+            if panel._transcript_bank:
+                self.action_open_transcript_bank()
+        elif action == "clear":
+            panel.clear_transcript_bank()
+            self._update_status()
+            self.notify("Transcript bank cleared", timeout=2)
+
     @on(Input.Submitted, ".panel-prompt")
     def on_submit(self, event: Input.Submitted) -> None:
         panel = None
@@ -525,7 +665,10 @@ class WingmanApp(App):
         if not panel:
             return
 
-        # Block input while generating
+        # Block input while recording or generating
+        if panel._listening:
+            self.notify("Stop listening first (F2 or Esc)", severity="warning", timeout=2)
+            return
         if panel._generating:
             self.notify("Wait for response to complete", severity="warning", timeout=2)
             return
@@ -1497,6 +1640,7 @@ Useful for: API patterns, file locations, conventions.
                 if arg
                 else "Usage: /kill <process_id>"
             ),
+            "bank": lambda: self.action_open_transcript_bank(),
             "bug": lambda: self._open_github_issue("bug_report.yml"),
             "feature": lambda: self._open_github_issue("feature_request.yml"),
             "stats": lambda: self._show_info(
@@ -1796,6 +1940,8 @@ Useful for: API patterns, file locations, conventions.
 
 [bold #a9b1d6]Shortcuts[/]
   [#7aa2f7]F1[/] or [#7aa2f7]Ctrl+/[/]  This help
+  [#7aa2f7]F2[/]              Toggle listening mode
+  [#7aa2f7]F3[/]              Transcript bank
   [#7aa2f7]Ctrl+Z[/]          Undo (restore last checkpoint)
   [#7aa2f7]Ctrl+B[/]          Background running command
 

@@ -109,6 +109,7 @@ COMMANDS = [
     ("/compact", "Compact context"),
     ("/context", "Context usage"),
     ("/stats", "Usage analytics"),
+    ("/bank", "Transcript bank"),
     ("/mcp", "MCP servers"),
     ("/memory", "Project memory"),
     ("/export", "Export session"),

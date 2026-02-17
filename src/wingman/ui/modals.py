@@ -458,3 +458,116 @@ class CredentialModal(ModalScreen[dict[str, str] | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class TranscriptBankModal(ModalScreen[tuple[str, list[int] | str | None] | None]):
+    """Modal for browsing transcript entries. Select text within an entry to insert."""
+
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("d", "delete_entry", "Delete"),
+        Binding("c", "clear_bank", "Clear All"),
+    ]
+
+    def __init__(self, entries: list, **kwargs):
+        super().__init__(**kwargs)
+        self.entries = entries
+        self._highlighted_idx: int = 0
+        self._viewing: bool = False
+
+    def compose(self):
+        from textual.widgets import TextArea
+
+        with Vertical():
+            yield Label("Transcript Bank", classes="title")
+            if self.entries:
+                items = []
+                for i, entry in enumerate(self.entries):
+                    ts = time.strftime("%H:%M:%S", time.localtime(entry.timestamp))
+                    preview = entry.text[:45].replace("\n", " ")
+                    if len(entry.text) > 45:
+                        preview += "..."
+                    items.append(ListItem(Label(f"[{ts}] {preview}"), id=f"entry-{i}"))
+                yield ListView(*items, id="bank-list")
+                yield TextArea("", id="bank-textarea", classes="bank-textarea hidden")
+                yield Static("↑↓ navigate | Enter open | d delete | c clear all | Esc close", id="bank-hint", classes="hint")
+            else:
+                yield Static("No recordings. Use F2 to start listening.", classes="empty")
+                yield Static("Esc/q close", classes="hint")
+
+    @on(ListView.Highlighted, "#bank-list")
+    def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item:
+            event.item.scroll_visible()
+            self._highlighted_idx = int(event.item.id.split("-")[1])
+
+    @on(ListView.Selected, "#bank-list")
+    def on_selected(self, event: ListView.Selected) -> None:
+        idx = int(event.item.id.split("-")[1])
+        self._open_entry(idx)
+
+    def _open_entry(self, idx: int) -> None:
+        from textual.widgets import TextArea
+
+        if not (0 <= idx < len(self.entries)):
+            return
+        self._viewing = True
+        entry = self.entries[idx]
+        ts = time.strftime("%H:%M:%S", time.localtime(entry.timestamp))
+        try:
+            self.query_one("#bank-list", ListView).add_class("hidden")
+            textarea = self.query_one("#bank-textarea", TextArea)
+            textarea.remove_class("hidden")
+            textarea.load_text(entry.text)
+            textarea.focus()
+            self.query_one("#bank-hint", Static).update(
+                f"[dim]{ts}[/] | Edit text | Shift+arrows to select | Ctrl+S insert | Esc back"
+            )
+        except Exception:
+            pass
+
+    def _close_entry(self) -> None:
+        from textual.widgets import TextArea
+
+        self._viewing = False
+        try:
+            self.query_one("#bank-textarea", TextArea).add_class("hidden")
+            list_view = self.query_one("#bank-list", ListView)
+            list_view.remove_class("hidden")
+            list_view.focus()
+            self.query_one("#bank-hint", Static).update(
+                "↑↓ navigate | Enter open | d delete | c clear all | Esc close"
+            )
+        except Exception:
+            pass
+
+    def on_key(self, event) -> None:
+        from textual.widgets import TextArea
+
+        if event.key == "ctrl+s" and self._viewing:
+            try:
+                textarea = self.query_one("#bank-textarea", TextArea)
+                text = textarea.selected_text or textarea.text
+                if text and text.strip():
+                    self.dismiss(("insert_text", text.strip()))
+                    event.stop()
+                    event.prevent_default()
+            except Exception:
+                pass
+
+    def action_back(self) -> None:
+        if self._viewing:
+            self._close_entry()
+        else:
+            self.dismiss(None)
+
+    def action_delete_entry(self) -> None:
+        if self._viewing or not self.entries:
+            return
+        if 0 <= self._highlighted_idx < len(self.entries):
+            entry_id = self.entries[self._highlighted_idx].id
+            self.dismiss(("delete", entry_id))
+
+    def action_clear_bank(self) -> None:
+        if not self._viewing:
+            self.dismiss(("clear", None))

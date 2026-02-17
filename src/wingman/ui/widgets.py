@@ -18,6 +18,7 @@ from textual.widgets import Input, Static
 from ..bulletin import get_bulletin_manager
 from ..command_completion import CompletionContext, apply_completion, get_completion_context, resolve_completion
 from ..config import APP_CREDIT, APP_VERSION, MODELS
+from ..voice import TranscriptEntry, VoiceRecorder, load_bank, save_bank
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
 from ..sessions import get_session, get_session_working_dir, save_session
@@ -557,6 +558,10 @@ class ChatPanel(Vertical):
         self.mcp_servers: list[str] = []
         self._is_active = False
         self._generating = False
+        self._listening = False
+        self._recorder = VoiceRecorder()
+        self._transcript_bank: list[TranscriptEntry] = load_bank()
+        self._current_transcript: str = ""
         self._cancel_requested = False
         self.working_dir: Path = Path.cwd()
 
@@ -567,6 +572,27 @@ class ChatPanel(Vertical):
     @messages.setter
     def messages(self, value: list[dict]) -> None:
         self.context.set_messages(value)
+
+    def commit_transcript(self) -> None:
+        """Save the current transcript as one bank entry and persist to disk."""
+        import time
+
+        text = self._current_transcript.strip()
+        if text:
+            next_id = max((e.id for e in self._transcript_bank), default=0) + 1
+            self._transcript_bank.append(TranscriptEntry(timestamp=time.time(), text=text, id=next_id))
+            save_bank(self._transcript_bank)
+        self._current_transcript = ""
+
+    def delete_transcript_entry(self, entry_id: int) -> None:
+        """Delete a single transcript entry by ID and persist."""
+        self._transcript_bank = [e for e in self._transcript_bank if e.id != entry_id]
+        save_bank(self._transcript_bank)
+
+    def clear_transcript_bank(self) -> None:
+        """Clear all transcript entries and persist to disk."""
+        self._transcript_bank = []
+        save_bank(self._transcript_bank)
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id=f"{self.panel_id}-scroll", classes="panel-scroll"):

@@ -1,7 +1,5 @@
 """Session storage and persistence."""
 
-from pathlib import Path
-
 from .config import SESSIONS_DIR
 from .lib import oj
 

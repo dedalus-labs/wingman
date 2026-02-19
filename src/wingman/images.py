@@ -61,8 +61,7 @@ def is_image_path(text: str) -> Path | None:
     # (check before normalization for URL-encoded extensions like .png)
     text_lower = text.lower()
     has_image_ext = any(
-        text_lower.endswith(ext) or f"{ext}%" in text_lower or ext in text_lower
-        for ext in IMAGE_EXTENSIONS
+        text_lower.endswith(ext) or f"{ext}%" in text_lower or ext in text_lower for ext in IMAGE_EXTENSIONS
     )
     if not has_image_ext:
         return None

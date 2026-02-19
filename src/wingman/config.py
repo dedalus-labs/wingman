@@ -1,5 +1,6 @@
 """Configuration and constants."""
 
+import contextlib
 from importlib.metadata import version
 from pathlib import Path
 
@@ -139,10 +140,8 @@ def save_api_key(api_key: str) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config = {}
     if CONFIG_FILE.exists():
-        try:
+        with contextlib.suppress(Exception):
             config = oj.loads(CONFIG_FILE.read_text())
-        except Exception:
-            pass
     config["api_key"] = api_key
     CONFIG_FILE.write_text(oj.dumps(config, indent=2))
 
@@ -172,7 +171,7 @@ def load_instructions(working_dir: Path | None = None) -> str:
                 if content.strip():
                     global_content = content.strip()
                     break
-        except (OSError, IOError):
+        except OSError:
             continue
 
     # Local instructions ({working_dir}/AGENTS.md or WINGMAN.md)
@@ -185,7 +184,7 @@ def load_instructions(working_dir: Path | None = None) -> str:
                     if content.strip():
                         local_content = content.strip()
                         break
-            except (OSError, IOError):
+            except OSError:
                 continue
 
     # Combine with hierarchy framing

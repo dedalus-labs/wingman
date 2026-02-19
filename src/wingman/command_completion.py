@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
-from .config import COMMANDS, COMMAND_OPTIONS
+from .config import COMMAND_OPTIONS, COMMANDS
 
 
 @dataclass(frozen=True)
@@ -147,11 +147,7 @@ def get_hint_candidates(
     if context.active_index == 0:
         search = context.active.text[1:] if context.active.text.startswith("/") else context.active.text
         search_lower = search.lower()
-        matches = [
-            cmd
-            for cmd, desc in COMMANDS
-            if search_lower in cmd.lower() or search_lower in desc.lower()
-        ]
+        matches = [cmd for cmd, desc in COMMANDS if search_lower in cmd.lower() or search_lower in desc.lower()]
         return matches
 
     if context.active_index == 1:
@@ -291,7 +287,7 @@ def longest_common_prefix(values: list[str]) -> str:
 def apply_completion(context: CompletionContext, replacement: str, add_space: bool) -> CompletionResult:
     """Apply a replacement to the active token using the completion context."""
     text = f"/{replacement}" if context.include_slash else replacement
-    new_value = f"{context.value[:context.replace_start]}{text}{context.value[context.replace_end:]}"
+    new_value = f"{context.value[: context.replace_start]}{text}{context.value[context.replace_end :]}"
     cursor_position = context.replace_start + len(text)
     if add_space and cursor_position == len(new_value) and not new_value.endswith(" "):
         new_value = f"{new_value} "

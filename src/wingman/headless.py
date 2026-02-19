@@ -1,6 +1,5 @@
 """Headless mode for Wingman - runs without TUI for scripting and benchmarks."""
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -64,7 +63,7 @@ async def run_headless(
 
         # Filter tools if allowed_tools specified
         if allowed_tools:
-            allowed_set = set(t.lower() for t in allowed_tools)
+            allowed_set = {t.lower() for t in allowed_tools}
             tools = [t for t in tools if t.__name__.lower() in allowed_set]
 
         kwargs = {

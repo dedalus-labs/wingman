@@ -258,7 +258,7 @@ class ChatMessage(Static):
 
 
 class Thinking(Static):
-    """Loading indicator with dynamic status label."""
+    """Loading indicator with dynamic status label and elapsed timer."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     IDLE_LABELS = ["Mazing", "Soaring", "Ascending Olympus", "Weaving fate", "Consulting the Oracle"]
@@ -268,6 +268,7 @@ class Thinking(Static):
         self._frame = 0
         self._status: str | None = None
         self._idle_label = random.choice(self.IDLE_LABELS)
+        self._start = time.monotonic()
 
     def on_mount(self) -> None:
         self.set_interval(0.08, self._tick)
@@ -281,11 +282,18 @@ class Thinking(Static):
         self._status = status
         self.refresh()
 
+    def _elapsed(self) -> str:
+        secs = int(time.monotonic() - self._start)
+        if secs < 60:
+            return f"{secs}s"
+        return f"{secs // 60}m{secs % 60:02d}s"
+
     def render(self) -> Text:
+        elapsed = f"[dim #565f89]{self._elapsed()}[/]"
         spinner = f"[#e0af68]{self.FRAMES[self._frame]}[/]"
         if self._status:
-            return Text.from_markup(f"{spinner} [#a9b1d6]{escape(self._status)}[/]")
-        return Text.from_markup(f"{spinner} [dim #a9b1d6]{self._idle_label}...[/]")
+            return Text.from_markup(f"{spinner} [#a9b1d6]{escape(self._status)}[/]  {elapsed}")
+        return Text.from_markup(f"{spinner} [dim #a9b1d6]{self._idle_label}...[/]  {elapsed}")
 
 
 class StreamingText(Static):

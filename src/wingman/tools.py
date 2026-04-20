@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import select
 import subprocess
 import threading
 import time
@@ -99,36 +98,38 @@ class BackgroundProcess:
 
     pid: int
     command: str
-    process: subprocess.Popen
+    process: asyncio.subprocess.Process
     output_buffer: list[str] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
-    notified: bool = False  # Whether completion notification was shown
+    notified: bool = False
+    _drain_task: asyncio.Task | None = field(default=None, repr=False)
 
-    def read_output(self) -> None:
-        if not self.process.stdout:
+    def start_drain(self) -> None:
+        """Start an async task that reads stdout until EOF."""
+        if self._drain_task is None:
+            self._drain_task = asyncio.create_task(self._drain())
+
+    async def _drain(self) -> None:
+        reader = self.process.stdout
+        if not reader:
             return
         try:
             while True:
-                ready, _, _ = select.select([self.process.stdout], [], [], 0)
-                if not ready:
-                    break
-                line = self.process.stdout.readline()
+                line = await reader.readline()
                 if not line:
                     break
-                self.output_buffer.append(line)
+                self.output_buffer.append(line.decode(errors="replace"))
                 if len(self.output_buffer) > 1000:
                     self.output_buffer = self.output_buffer[-500:]
         except (OSError, ValueError):
-            # Process stdout closed or select interrupted
             pass
 
     def get_recent_output(self, lines: int = 50) -> str:
-        self.read_output()
         recent = self.output_buffer[-lines:] if self.output_buffer else []
         return "".join(recent) or "(no output yet)"
 
     def is_running(self) -> bool:
-        return self.process.poll() is None
+        return self.process.returncode is None
 
 
 # Background processes per panel
@@ -233,7 +234,6 @@ def check_completed_processes() -> list[tuple[str, str, int, str]]:
         for bg_id, proc in processes.items():
             if not proc.is_running() and not proc.notified:
                 proc.notified = True
-                proc.read_output()  # Capture final output
                 exit_code = proc.process.returncode or 0
                 completed.append((panel_id, bg_id, exit_code, proc.command))
     return completed
@@ -999,63 +999,76 @@ async def _run_command_impl(command: str, working_dir: Path, panel_id: str | Non
         _background_requested[panel_id] = False
     widget_id = await _show_command_widget(command, panel_id)
 
+    timeout = 120
+
     try:
-        proc = subprocess.Popen(
+        proc = await asyncio.create_subprocess_shell(
             command,
-            shell=True,
             cwd=working_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
 
-        output_lines = []
-        start_time = time.time()
-        timeout = 120
+        output_lines: list[str] = []
 
-        while True:
-            await asyncio.sleep(0.05)
+        async def read_lines() -> None:
+            assert proc.stdout is not None
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                output_lines.append(line.decode(errors="replace"))
 
-            if panel_id and _background_requested.get(panel_id, False):
-                _background_requested[panel_id] = False
-                bg_id = f"bg_{_next_bg_id}"
-                _next_bg_id += 1
+        reader_task = asyncio.create_task(read_lines())
+        start_time = time.monotonic()
 
-                bg_proc = BackgroundProcess(
-                    pid=proc.pid,
-                    command=command,
-                    process=proc,
-                    output_buffer=output_lines.copy(),
+        try:
+            # I/O is event-driven (readline awaits kernel readiness).
+            # The 200ms wake checks the Ctrl+B flag — Textual key bindings
+            # set a dict flag from the main thread, no asyncio.Event bridge.
+            while True:
+                done, _ = await asyncio.wait(
+                    [reader_task],
+                    timeout=0.2,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                # Store in per-panel dict
-                if panel_id not in _panel_background_processes:
-                    _panel_background_processes[panel_id] = {}
-                _panel_background_processes[panel_id][bg_id] = bg_proc
 
-                await _update_command_status(widget_id, "backgrounded", panel_id=panel_id)
-                _track_tool_call(f"$ {command}", "backgrounded", "success", panel_id)
-                return f"[Backgrounded: {bg_id}] {command}\nUse get_process_output('{bg_id}') to check status."
+                if panel_id and _background_requested.get(panel_id, False):
+                    _background_requested[panel_id] = False
+                    bg_id = f"bg_{_next_bg_id}"
+                    _next_bg_id += 1
 
-            if proc.poll() is not None:
-                remaining = proc.stdout.read() if proc.stdout else ""
-                if remaining:
-                    output_lines.append(remaining)
-                break
+                    bg_proc = BackgroundProcess(
+                        pid=proc.pid,
+                        command=command,
+                        process=proc,
+                        output_buffer=output_lines.copy(),
+                    )
+                    bg_proc.start_drain()
+                    reader_task.cancel()
+                    if panel_id not in _panel_background_processes:
+                        _panel_background_processes[panel_id] = {}
+                    _panel_background_processes[panel_id][bg_id] = bg_proc
 
-            if proc.stdout:
-                ready, _, _ = select.select([proc.stdout], [], [], 0)
-                if ready:
-                    line = proc.stdout.readline()
-                    if line:
-                        output_lines.append(line)
+                    await _update_command_status(widget_id, "backgrounded", panel_id=panel_id)
+                    _track_tool_call(f"$ {command}", "backgrounded", "success", panel_id)
+                    return f"[Backgrounded: {bg_id}] {command}\nUse get_process_output('{bg_id}') to check status."
 
-            if time.time() - start_time > timeout:
-                proc.terminate()
-                output = "".join(output_lines[-50:])
-                await _update_command_status(widget_id, "error", f"Timed out after {timeout}s", panel_id)
-                _track_tool_call(f"$ {command}", f"Timed out after {timeout}s", "error", panel_id)
-                return f"Error: Command timed out after {timeout}s\n" + output
+                if reader_task.done():
+                    break
+
+                if time.monotonic() - start_time > timeout:
+                    proc.terminate()
+                    reader_task.cancel()
+                    output = "".join(output_lines[-50:])
+                    await _update_command_status(widget_id, "error", f"Timed out after {timeout}s", panel_id)
+                    _track_tool_call(f"$ {command}", f"Timed out after {timeout}s", "error", panel_id)
+                    return f"Error: Command timed out after {timeout}s\n" + output
+
+        except Exception:
+            raise
+
+        await proc.wait()
 
         output = "".join(output_lines)
         if len(output) > 10000:
@@ -1100,10 +1113,8 @@ def stop_process(process_id: str, panel_id: str | None = None) -> str:
 
     if proc.is_running():
         proc.process.terminate()
-        try:
-            proc.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.process.kill()
+        if proc._drain_task and not proc._drain_task.done():
+            proc._drain_task.cancel()
 
     if panel_id and panel_id in _panel_background_processes:
         _panel_background_processes[panel_id].pop(process_id, None)
@@ -1409,41 +1420,20 @@ def _notebook_edit_impl_headless(
 async def _run_command_impl_headless(command: str, working_dir: Path, timeout: int = 120) -> str:
     """Run a shell command - headless mode (auto-approve)."""
     try:
-        proc = subprocess.Popen(
+        proc = await asyncio.create_subprocess_shell(
             command,
-            shell=True,
             cwd=working_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
 
-        output_lines = []
-        start_time = time.time()
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.terminate()
+            return f"Error: Command timed out after {timeout}s"
 
-        while True:
-            await asyncio.sleep(0.05)
-
-            if proc.poll() is not None:
-                remaining = proc.stdout.read() if proc.stdout else ""
-                if remaining:
-                    output_lines.append(remaining)
-                break
-
-            if proc.stdout:
-                ready, _, _ = select.select([proc.stdout], [], [], 0)
-                if ready:
-                    line = proc.stdout.readline()
-                    if line:
-                        output_lines.append(line)
-
-            if time.time() - start_time > timeout:
-                proc.terminate()
-                output = "".join(output_lines[-50:])
-                return f"Error: Command timed out after {timeout}s\n" + output
-
-        output = "".join(output_lines)
+        output = stdout_bytes.decode(errors="replace") if stdout_bytes else ""
         if len(output) > 10000:
             output = output[:10000] + "\n... (truncated)"
 

@@ -24,8 +24,12 @@ Do not free-form the PR body.
   or the main repo checkout.
 - Push with `-u` if needed
 - Use `gh pr create` with `--body "$(cat <<'EOF' ... EOF)"` for correct formatting
-- LOC check: if diff exceeds 200 changed lines (excluding generated files), warn the user
-  and suggest splitting into stacked PRs
+- **Hard limit: 500 changed LOC** (excluding generated files and lock files).
+  If the diff exceeds 500 lines, do not create the PR. Instead, propose a
+  stacked-PR plan: split changes into logical, independently reviewable PRs
+  where each PR is under 500 LOC. Each stacked PR targets the previous one's
+  branch (not main) until the final one merges the stack into main.
+- Warn at 200 changed lines — suggest splitting proactively
 
 ## Task
 

@@ -13,6 +13,7 @@ synced to `.wingman/skills/` for agents that look there.
 | `pr` | Create a PR using the wingman template |
 | `pr-review` | Triage reviewer comments on a PR |
 | `issue` | File a GitHub issue from a template |
+| `promote` | Changelog-style promotion PR between branches |
 | `greentext` | Terse `>` line explanations of system behavior |
 | `better-interface` | TUI polish principles for Textual widgets |
 

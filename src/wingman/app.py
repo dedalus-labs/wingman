@@ -1609,6 +1609,7 @@ def main():
         pass
 
     parser = argparse.ArgumentParser(prog="wingman", description="Wingman - AI coding assistant for the terminal")
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {APP_VERSION}")
     parser.add_argument(
         "-p",
         "--print",

@@ -92,17 +92,23 @@ async def request_tool_approval(tool_name: str, command: str, panel_id: str | No
     return (True, "")
 
 
-@dataclass
+OUTPUT_BUFFER_MAX   = 1000
+OUTPUT_BUFFER_TRIM  = 500
+
+
+# fmt: off
+@dataclass(slots=True)
 class BackgroundProcess:
     """Tracks a backgrounded shell process."""
 
-    pid: int
-    command: str
-    process: asyncio.subprocess.Process
-    output_buffer: list[str] = field(default_factory=list)
-    started_at: float = field(default_factory=time.time)
-    notified: bool = False
-    _drain_task: asyncio.Task | None = field(default=None, repr=False)
+    pid:           int                              # OS process ID.
+    command:       str                              # Shell command string.
+    process:       asyncio.subprocess.Process       # Async subprocess handle.
+    output_buffer: list[str]              = field(default_factory=list)
+    started_at:    float                  = field(default_factory=time.time)
+    notified:      bool                   = False   # Completion notification shown.
+    _drain_task:   asyncio.Task | None    = field(default=None, repr=False)
+# fmt: on
 
     def start_drain(self) -> None:
         """Start an async task that reads stdout until EOF."""
@@ -119,8 +125,8 @@ class BackgroundProcess:
                 if not line:
                     break
                 self.output_buffer.append(line.decode(errors="replace"))
-                if len(self.output_buffer) > 1000:
-                    self.output_buffer = self.output_buffer[-500:]
+                if len(self.output_buffer) > OUTPUT_BUFFER_MAX:
+                    self.output_buffer = self.output_buffer[-OUTPUT_BUFFER_TRIM:]
         except (OSError, ValueError):
             pass
 
@@ -132,11 +138,12 @@ class BackgroundProcess:
         return self.process.returncode is None
 
 
-# Background processes per panel
+# --- Per-panel background process state ---
+
 _panel_background_processes: dict[str, dict[str, BackgroundProcess]] = {}
-_next_bg_id: int = 1
-_background_requested: dict[str, bool] = {}  # Per-panel background request flags
-_command_widget_counter: int = 0
+_background_requested:       dict[str, bool]                        = {}
+_next_bg_id:                 int                                    = 1
+_command_widget_counter:     int                                    = 0
 
 # Track segments (text + tool calls) per panel for session persistence
 _panel_segments: dict[str, list[dict]] = {}

@@ -111,6 +111,7 @@ uv run wingman
 ```
 
 This enables:
+
 - **Local bulletin loading**: Reads messages from `./bulletin/` instead of fetching from GitHub
 - Useful for testing new banners, tips, or notices before committing
 
@@ -131,9 +132,9 @@ Look for issues labeled `good first issue` to get started.
 
 ## Links
 
-| Resource | Description |
-|----------|-------------|
-| [Style Guide](docs/style/README.md) | Python conventions |
-| [Conventional Commits](docs/conventional-commits.md) | Commit message format |
-| [SECURITY.md](SECURITY.md) | Reporting vulnerabilities |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
+| Resource                                             | Description               |
+| ---------------------------------------------------- | ------------------------- |
+| [Style Guide](docs/style/README.md)                  | Python conventions        |
+| [Conventional Commits](docs/conventional-commits.md) | Commit message format     |
+| [SECURITY.md](SECURITY.md)                           | Reporting vulnerabilities |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)             | Community standards       |

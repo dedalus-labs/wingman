@@ -142,8 +142,7 @@ class MultilineInput(Input):
             # Check if this looks like an image path - don't collapse those
             text_lower = event.text.lower().strip().strip("'\"")
             is_image = any(text_lower.endswith(ext) for ext in IMAGE_EXTENSIONS) or (
-                text_lower.startswith("file://")
-                and any(ext in text_lower for ext in IMAGE_EXTENSIONS)
+                text_lower.startswith("file://") and any(ext in text_lower for ext in IMAGE_EXTENSIONS)
             )
 
             if is_image:
@@ -240,6 +239,7 @@ class MultilineInput(Input):
             else:
                 parts.append(f"[#7aa2f7]{cand}[/]")
         hint.update("  ".join(parts))
+
 
 class ChatMessage(Static):
     """Single chat message."""

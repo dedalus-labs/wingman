@@ -2,6 +2,24 @@
 
 Instructions for AI coding agents working in the Wingman codebase.
 
+## Skills
+
+Agent skills live in `.agents/skills/` (source of truth). A mirror is
+synced to `.wingman/skills/` for agents that look there.
+
+| Skill | Purpose |
+| --- | --- |
+| `commit` | Conventional commit from staged changes |
+| `pr` | Create a PR using the wingman template |
+| `pr-review` | Triage reviewer comments on a PR |
+| `issue` | File a GitHub issue from a template |
+| `promote` | Changelog-style promotion PR between branches |
+| `greentext` | Terse `>` line explanations of system behavior |
+| `better-interface` | TUI polish principles for Textual widgets |
+
+Run `scripts/sync-agents.sh` after editing `.agents/skills/` to update
+the `.wingman/` mirror.
+
 ## Essential Commands
 
 ```bash

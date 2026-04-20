@@ -1,0 +1,108 @@
+---
+name: Update Homebrew Formula
+description: Generate and push a Homebrew formula for a Python package to a tap repo.
+
+inputs:
+  package-name:
+    description: PyPI package name
+    required: true
+  version:
+    description: Package version (without v prefix)
+    required: true
+  formula-name:
+    description: Homebrew formula name (defaults to package-name)
+    required: false
+  description:
+    description: Formula description
+    required: true
+  homepage:
+    description: Project homepage URL
+    required: true
+  tap-repo:
+    description: "Tap repository (e.g. dedalus-labs/homebrew-dedalus)"
+    required: true
+  tap-token:
+    description: GitHub token with write access to the tap repo
+    required: true
+  python-version:
+    description: Python dependency version for Homebrew
+    required: false
+    default: "3.13"
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch PyPI metadata
+      id: pypi
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package-name }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        for i in 1 2 3 4 5; do
+          RESP=$(curl -sL "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json") && break
+          sleep 10
+        done
+
+        SHA=$(echo "$RESP" | python3 -c "
+        import sys, json
+        urls = json.load(sys.stdin)['urls']
+        print(next(u['digests']['sha256'] for u in urls if u['packagetype'] == 'sdist'))
+        ")
+
+        SLUG=$(echo "$PACKAGE" | tr '-' '_')
+        URL="https://files.pythonhosted.org/packages/source/${PACKAGE:0:1}/${PACKAGE}/${SLUG}-${VERSION}.tar.gz"
+
+        echo "url=${URL}" >> "$GITHUB_OUTPUT"
+        echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+    - name: Generate formula
+      shell: bash
+      env:
+        FORMULA_NAME: ${{ inputs.formula-name || inputs.package-name }}
+        DESCRIPTION: ${{ inputs.description }}
+        HOMEPAGE: ${{ inputs.homepage }}
+        PYPI_URL: ${{ steps.pypi.outputs.url }}
+        PYPI_SHA: ${{ steps.pypi.outputs.sha256 }}
+        PYTHON_DEP: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+
+        CLASS=$(echo "$FORMULA_NAME" | sed 's/-/ /g; s/\b\(.\)/\u\1/g; s/ //g')
+
+        mkdir -p _homebrew
+        cat > "_homebrew/${FORMULA_NAME}.rb" <<RUBY
+        class ${CLASS} < Formula
+          include Language::Python::Virtualenv
+
+          desc "${DESCRIPTION}"
+          homepage "${HOMEPAGE}"
+          url "${PYPI_URL}"
+          sha256 "${PYPI_SHA}"
+          license "MIT"
+
+          depends_on "python@${PYTHON_DEP}"
+
+          def install
+            virtualenv_install_with_resources
+          end
+
+          test do
+            assert_match version.to_s, shell_output("#{bin}/${FORMULA_NAME} --version", 2)
+          end
+        end
+        RUBY
+        sed -i 's/^        //' "_homebrew/${FORMULA_NAME}.rb"
+
+    - name: Push to tap
+      uses: cpina/github-action-push-to-another-repository@v1.7.2
+      env:
+        API_TOKEN_GITHUB: ${{ inputs.tap-token }}
+      with:
+        source-directory: _homebrew
+        destination-github-username: ${{ github.repository_owner }}
+        destination-repository-name: ${{ inputs.tap-repo }}
+        target-branch: main
+        commit-message: "${{ inputs.formula-name || inputs.package-name }} ${{ inputs.version }}"

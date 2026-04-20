@@ -24,6 +24,13 @@
 - **Image support**: Attach and analyze images in conversations
 - **Context management**: Auto-compaction when context runs low
 
+## Philosophy
+
+Wingman ships only the features people actually use. No scope creep, no
+feature flags for hypothetical workflows, no slash commands that exist
+"just in case." If a feature doesn't earn its keep in daily use, it gets
+cut. Simplicity is the product.
+
 ## Installation
 
 ### Using uv (recommended)

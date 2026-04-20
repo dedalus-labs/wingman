@@ -571,3 +571,44 @@ DiffModal .hint {
     text-align: center;
     padding-top: 1;
 }
+
+/* --- Process Modal --- */
+ProcessModal {
+    align: center middle;
+}
+
+ProcessModal > Vertical {
+    width: 80;
+    height: auto;
+    max-height: 60%;
+    background: #1a1b26;
+    border: solid #3d59a1;
+    padding: 1 2;
+}
+
+ProcessModal .title {
+    text-style: bold;
+    color: #7aa2f7;
+    padding-bottom: 1;
+    border-bottom: solid #24283b;
+}
+
+ProcessModal #proc-table {
+    height: auto;
+    padding: 1 0;
+}
+
+ProcessModal .preview {
+    color: #565f89;
+    padding: 1;
+    border-top: solid #24283b;
+    height: auto;
+    max-height: 10;
+    background: #16161e;
+}
+
+ProcessModal .hint {
+    color: #565f89;
+    text-align: center;
+    padding-top: 1;
+}

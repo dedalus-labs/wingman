@@ -1,0 +1,18 @@
+name: "Vouch: Check PR"
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mitchellh/vouch/action/setup-vouch@main
+      - uses: mitchellh/vouch/action/check-pr@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-close: true

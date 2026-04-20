@@ -1,0 +1,24 @@
+name: Agents Sync Check
+
+on:
+  pull_request:
+    paths:
+      - .agents/skills/**
+      - .wingman/skills/**
+      - scripts/sync-agents.sh
+      - .github/workflows/agents-sync-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Verify .wingman/skills mirrors .agents/skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run sync in check mode
+        run: bash scripts/sync-agents.sh --check

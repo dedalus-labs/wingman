@@ -134,6 +134,7 @@ Look for issues labeled `good first issue` to get started.
 
 | Resource                                             | Description               |
 | ---------------------------------------------------- | ------------------------- |
+| [Development](docs/development.md)                   | Local dev workflow        |
 | [Style Guide](docs/style/README.md)                  | Python conventions        |
 | [Conventional Commits](docs/conventional-commits.md) | Commit message format     |
 | [SECURITY.md](SECURITY.md)                           | Reporting vulnerabilities |

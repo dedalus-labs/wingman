@@ -13,6 +13,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
 from ..config import save_api_key
+from ..tools import BackgroundProcess, get_background_processes, stop_process
 
 
 class APIKeyScreen(ModalScreen[str | None]):
@@ -383,3 +384,168 @@ class DiffModal(ModalScreen[bool]):
 
     def action_reject(self) -> None:
         self.dismiss(False)
+
+
+def _format_age(started_at: float) -> str:
+    """Format elapsed time like kubectl: 5s, 2m10s, 1h3m."""
+    secs = int(time.time() - started_at)
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m{secs % 60}s"
+    hours = secs // 3600
+    mins = (secs % 3600) // 60
+    return f"{hours}h{mins}m"
+
+
+def _format_process_table(
+    processes: dict[str, BackgroundProcess],
+    selected_id: str | None = None,
+) -> str:
+    """Render processes as a kubectl-style column-aligned table.
+
+    Args:
+        processes: Mapping of bg_id -> BackgroundProcess.
+        selected_id: Currently highlighted process ID.
+
+    Returns:
+        Formatted table string with Rich markup.
+
+    """
+    if not processes:
+        return "[dim]No background processes[/]"
+
+    rows: list[tuple[str, str, str, str]] = []
+    for bg_id, proc in processes.items():
+        cmd = proc.command[:50] + "..." if len(proc.command) > 50 else proc.command
+        if proc.is_running():
+            status = "[#e0af68]Running[/]"
+        elif proc.process.returncode == 0:
+            status = "[#9ece6a]Done[/]"
+        else:
+            status = f"[#f7768e]Exit {proc.process.returncode}[/]"
+        age = _format_age(proc.started_at)
+        rows.append((bg_id, cmd, status, age))
+
+    w_id = max(len(r[0]) for r in rows)
+    w_cmd = max(len(r[1]) for r in rows)
+    w_age = max(len(r[3]) for r in rows)
+
+    header = (
+        f"[bold #565f89]{'ID':<{w_id}}  {'COMMAND':<{w_cmd}}  {'STATUS':<10}  {'AGE':>{w_age}}[/]"
+    )
+    lines = [header]
+    for bg_id, cmd, status, age in rows:
+        marker = "[#7aa2f7]>[/] " if bg_id == selected_id else "  "
+        lines.append(
+            f"{marker}[#c0caf5]{bg_id:<{w_id}}[/]  [dim]{escape(cmd):<{w_cmd}}[/]  {status:<10}  [dim]{age:>{w_age}}[/]"
+        )
+    return "\n".join(lines)
+
+
+class ProcessModal(ModalScreen[str | None]):
+    """Background process manager modal — kubectl-style."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("q", "close", "Close"),
+        Binding("k", "kill", "Kill"),
+    ]
+
+    def __init__(self, panel_id: str | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.panel_id = panel_id
+        self._selected_id: str | None = None
+        self._pending_kill: bool = False
+
+    def compose(self):
+        with Vertical():
+            yield Label("Background Processes", classes="title")
+            yield Static("", id="proc-table")
+            yield Static("", id="proc-output", classes="preview")
+            yield Static("", id="proc-hint", classes="hint")
+
+    def on_mount(self) -> None:
+        self._refresh()
+        self.set_interval(1.0, self._refresh)
+
+    def _refresh(self) -> None:
+        """Re-render the process table and output preview."""
+        processes = get_background_processes(self.panel_id)
+        table_widget = self.query_one("#proc-table", Static)
+        table_widget.update(Text.from_markup(_format_process_table(processes, self._selected_id)))
+
+        # Auto-select first process if none selected or selected is gone
+        if processes and (self._selected_id is None or self._selected_id not in processes):
+            self._selected_id = next(iter(processes))
+            self._pending_kill = False
+
+        if not processes:
+            self._selected_id = None
+
+        self._refresh_output(processes)
+        self._refresh_hint(processes)
+
+    def _refresh_output(self, processes: dict[str, BackgroundProcess]) -> None:
+        """Update the output preview for the selected process."""
+        output_widget = self.query_one("#proc-output", Static)
+        if not self._selected_id or self._selected_id not in processes:
+            output_widget.update("")
+            return
+
+        proc = processes[self._selected_id]
+        recent = proc.get_recent_output(lines=8)
+        # Trim to last 8 lines for preview
+        preview_lines = recent.strip().split("\n")[-8:]
+        header = f"[bold #565f89]── Output: {self._selected_id} ──[/]"
+        body = escape("\n".join(preview_lines))
+        output_widget.update(Text.from_markup(f"{header}\n[dim]{body}[/]"))
+
+    def _refresh_hint(self, processes: dict[str, BackgroundProcess]) -> None:
+        """Update the hint bar."""
+        hint_widget = self.query_one("#proc-hint", Static)
+        if not processes:
+            hint_widget.update(Text.from_markup("[dim]Esc close[/]"))
+            return
+        if self._pending_kill:
+            hint_widget.update(
+                Text.from_markup(f"[#f7768e]Press k again to kill {self._selected_id}[/]  Esc cancel")
+            )
+        else:
+            hint_widget.update(
+                Text.from_markup("[dim]↑↓ select  k kill  Esc close[/]")
+            )
+
+    def on_key(self, event) -> None:
+        """Handle arrow keys for process selection."""
+        processes = get_background_processes(self.panel_id)
+        ids = list(processes.keys())
+        if not ids:
+            return
+
+        if event.key in ("up", "down"):
+            event.prevent_default()
+            event.stop()
+            idx = ids.index(self._selected_id) if self._selected_id in ids else 0
+            if event.key == "up":
+                idx = max(0, idx - 1)
+            else:
+                idx = min(len(ids) - 1, idx + 1)
+            self._selected_id = ids[idx]
+            self._pending_kill = False
+            self._refresh()
+
+    def action_kill(self) -> None:
+        if not self._selected_id:
+            return
+        if self._pending_kill:
+            stop_process(self._selected_id, self.panel_id)
+            self._pending_kill = False
+            self._selected_id = None
+            self._refresh()
+        else:
+            self._pending_kill = True
+            self._refresh_hint(get_background_processes(self.panel_id))
+
+    def action_close(self) -> None:
+        self.dismiss(None)

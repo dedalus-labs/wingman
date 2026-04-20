@@ -53,6 +53,7 @@ from .ui import (
     DiffModal,
     ImageChip,
     InputModal,
+    ProcessModal,
     SelectionModal,
     StreamingText,
     Thinking,
@@ -1381,11 +1382,11 @@ Useful for: API patterns, file locations, conventions.
             "quit": lambda: self.exit(),
             "exit": lambda: self.exit(),
             "ls": lambda: self._do_ls(arg or "*", self.active_panel.working_dir if self.active_panel else Path.cwd()),
-            "ps": lambda: self._show_info(
-                f"[bold #7aa2f7]Background Processes[/]\n{list_processes(self.active_panel.panel_id if self.active_panel else None)}"
+            "ps": lambda: self.push_screen(
+                ProcessModal(panel_id=self.active_panel.panel_id if self.active_panel else None)
             ),
-            "processes": lambda: self._show_info(
-                f"[bold #7aa2f7]Background Processes[/]\n{list_processes(self.active_panel.panel_id if self.active_panel else None)}"
+            "processes": lambda: self.push_screen(
+                ProcessModal(panel_id=self.active_panel.panel_id if self.active_panel else None)
             ),
             "kill": lambda: self._show_info(
                 stop_process(arg, self.active_panel.panel_id if self.active_panel else None)

@@ -136,6 +136,14 @@ class MultilineInput(Input):
         self._start_completion_cycle(context)
         return True
 
+    class ImageDropped(Message):
+        """Posted when a paste contains an image path. The app attaches the image
+        without modifying the input value, so typed text is preserved."""
+
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
+
     def _on_paste(self, event: events.Paste) -> None:
         self._completion_cycle = None
         if event.text:
@@ -146,15 +154,12 @@ class MultilineInput(Input):
             )
 
             if is_image:
-                # For image paths, preserve the path exactly (just trim whitespace)
-                cleaned = event.text.strip()
-                self._pasted_content = None
-                self._paste_placeholder = None
-                selection = self.selection
-                if selection.is_empty:
-                    self.insert_text_at_cursor(cleaned)
-                else:
-                    self.replace(cleaned, *selection)
+                # Route to the app so the image attaches without touching the
+                # input's current value (which may already contain typed text).
+                self.post_message(self.ImageDropped(event.text.strip().strip("'\"")))
+                event.stop()
+                event.prevent_default()
+                return
             else:
                 # For regular text, join multiple lines
                 cleaned = " ".join(event.text.split())

@@ -53,6 +53,7 @@ from .ui import (
     DiffModal,
     ImageChip,
     InputModal,
+    MultilineInput,
     SelectionModal,
     StreamingText,
     Thinking,
@@ -344,6 +345,25 @@ class WingmanApp(App):
             input_widget._on_paste(event)
             event.stop()
 
+    @on(MultilineInput.ImageDropped)
+    def on_image_dropped(self, event: MultilineInput.ImageDropped) -> None:
+        """Attach a dropped/pasted image without touching the input's typed text."""
+        panel = self.active_panel
+        if not panel:
+            return
+        image_path = is_image_path(event.path)
+        if not image_path:
+            return
+        if any(img.name == image_path.name for img in panel.pending_images):
+            return
+        cached = cache_image_immediately(image_path)
+        if not cached:
+            return
+        panel.pending_images.append(cached)
+        panel.refresh_image_chips()
+        panel.get_hint().update("[dim]↑ to select images · backspace to remove[/]")
+        self._update_status()
+
     @on(ImageChip.Removed)
     def on_image_chip_removed(self, event: ImageChip.Removed) -> None:
         """Remove an image when its chip is deleted."""
@@ -557,7 +577,7 @@ class WingmanApp(App):
             panel.add_image_message("user", text, images_to_send)
         else:
             panel.add_message("user", text)
-        
+
         # Save session immediately after user message
         save_session(panel.session_id, panel.messages)
 
@@ -624,7 +644,6 @@ class WingmanApp(App):
                 kwargs["mcp_servers"] = panel.mcp_servers
             if self.coding_mode:
                 kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
-
 
             # Set session context for checkpoint tracking
             set_current_session(panel.session_id)
@@ -1604,6 +1623,7 @@ def main():
     # Load environment variables from .env file
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except ImportError:
         pass

@@ -1376,26 +1376,33 @@ Useful for: API patterns, file locations, conventions.
             self._show_info(f"[#f7768e]Could not import from:[/] {arg}")
 
     def _cmd_fork(self, arg: str) -> None:
-        """Fork the active session, optionally rewinding N user turns first.
+        """Fork the active session.
 
-        /fork         clones all current messages into a new session.
-        /fork <n>     rewinds N user turns, then clones.
+        /fork         opens the fork picker modal.
+        /fork <n>     rewinds N user turns, then forks (bypasses the picker).
         """
         panel = self.active_panel
         if not panel or not panel.messages:
             self._show_info("No messages to fork")
             return
+        if panel._generating:
+            self._show_info("[#e0af68]Wait for response to complete before forking[/]")
+            return
 
-        n = 0
-        if arg.strip():
-            try:
-                n = int(arg.strip())
-            except ValueError:
-                self._show_info("Usage: /fork [n]  (n = user turns to rewind)")
-                return
-            if n < 0:
-                self._show_info("n must be non-negative")
-                return
+        if not arg.strip():
+            from .ui.modals import ForkPickerModal
+
+            self.push_screen(ForkPickerModal(list(panel.messages)), self._on_fork_picked)
+            return
+
+        try:
+            n = int(arg.strip())
+        except ValueError:
+            self._show_info("Usage: /fork [n]  (n = user turns to rewind)")
+            return
+        if n < 0:
+            self._show_info("n must be non-negative")
+            return
 
         cut_at = len(panel.messages)
         if n > 0:
@@ -1404,6 +1411,22 @@ Useful for: API patterns, file locations, conventions.
                 self._show_info(f"Cannot rewind {n}: only {len(user_indexes)} user turns in history")
                 return
             cut_at = user_indexes[-n]
+
+        self._do_fork_at(cut_at)
+
+    def _on_fork_picked(self, cut_at: int | None) -> None:
+        if cut_at is None:
+            return
+        self._do_fork_at(cut_at)
+
+    def _do_fork_at(self, cut_at: int) -> None:
+        """Create a fork of the active panel's session keeping messages[:cut_at]."""
+        panel = self.active_panel
+        if not panel:
+            return
+        if not 0 <= cut_at <= len(panel.messages):
+            self._show_info(f"[#f7768e]Invalid fork point:[/] {cut_at}")
+            return
 
         parent_id = panel.session_id
         new_id = f"{parent_id or 'chat'}-fork-{time.time_ns()}"
@@ -1423,12 +1446,10 @@ Useful for: API patterns, file locations, conventions.
             self._show_info(f"[#9ece6a]Forked to[/] {new_id} [dim](panel limit reached; open with Ctrl+S)[/]")
             return
 
-        # Toast the success BEFORE creating the panel: _show_info would target the
-        # new panel whose chat container isn't composed yet.
+        # Toast before creating the panel: _show_info would target the new
+        # panel whose chat container isn't composed yet.
         self.notify(f"Forked at message {cut_at}: {new_id}", timeout=3.0)
-        panel = self._create_panel(initial_session_id=new_id)
-        if panel is None:
-            return
+        self._create_panel(initial_session_id=new_id)
         self._refresh_sessions()
 
     def _cmd_forks(self, arg: str) -> None:
@@ -1670,8 +1691,8 @@ Useful for: API patterns, file locations, conventions.
   [#7aa2f7]/import <path>[/]  Import from file
 
 [bold #a9b1d6]Forking[/]
-  [#7aa2f7]/fork[/]           Fork current session into a new panel
-  [#7aa2f7]/fork <n>[/]       Rewind n user turns, then fork
+  [#7aa2f7]/fork[/]           Open the fork picker (pick a point in history)
+  [#7aa2f7]/fork <n>[/]       Rewind n user turns, then fork (0 = clone all)
   [#7aa2f7]/forks[/]          List forks of this session
 
 [bold #a9b1d6]Config[/]

@@ -193,6 +193,106 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
         self.dismiss(None)
 
 
+class ForkPickerModal(ModalScreen[int | None]):
+    """Pick a point in the active conversation to fork from.
+
+    Dismisses with a cut_at index (fork keeps messages[:cut_at]) or None if
+    canceled. The top "HEAD" row clones everything; selecting message N
+    forks AFTER N, so the fork contains messages[0..N] inclusive.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("q", "cancel", "Cancel"),
+    ]
+
+    MAX_PREVIEW = 80
+
+    ROLE_COLOR = {
+        "user": "#7aa2f7",
+        "assistant": "#9ece6a",
+        "tool": "#e0af68",
+        "system": "#bb9af7",
+    }
+
+    def __init__(self, messages: list[dict], **kwargs):
+        super().__init__(**kwargs)
+        self.messages = messages
+
+    def compose(self):
+        with Vertical():
+            yield Label("Fork from...", classes="title")
+            items = [
+                ListItem(
+                    Label("[#9ece6a]HEAD[/]    Clone everything (full fork)"),
+                    id="fork-item-head",
+                )
+            ]
+            for i, msg in enumerate(self.messages):
+                items.append(
+                    ListItem(
+                        Label(self._format_row(i, msg)),
+                        id=f"fork-item-{i}",
+                    )
+                )
+            yield ListView(*items)
+            yield Static(
+                "Fork contains everything up to and including the selected message.",
+                classes="hint",
+            )
+            yield Static(
+                "Up/Down navigate  .  Enter select  .  Esc cancel",
+                classes="hint",
+            )
+
+    def _format_row(self, idx: int, msg: dict) -> str:
+        role = msg.get("role", "?")
+        content = msg.get("content") or ""
+        if isinstance(content, list):
+            content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+        # Segment-based assistant messages: flatten text+tool to a preview.
+        if not content and "segments" in msg:
+            parts = []
+            for seg in msg["segments"]:
+                parts.append(seg.get("content") or seg.get("command") or "")
+            content = " ".join(p for p in parts if p)
+        preview = content[: self.MAX_PREVIEW].replace("\n", " ")
+        if len(content) > self.MAX_PREVIEW:
+            preview += "..."
+        color = self.ROLE_COLOR.get(role, "#a9b1d6")
+        return f"[dim]{idx:>3}[/] [{color}]{role:<9}[/] {escape(preview)}"
+
+    def on_mount(self) -> None:
+        # Land on the latest message: that's where most forks will happen.
+        try:
+            lv = self.query_one(ListView)
+            if self.messages:
+                lv.index = len(self.messages)  # last message row (HEAD is index 0)
+                lv.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    @on(ListView.Highlighted)
+    def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item:
+            event.item.scroll_visible()
+
+    @on(ListView.Selected)
+    def on_select(self, event: ListView.Selected) -> None:
+        if not event.item or not event.item.id:
+            return
+        item_id = event.item.id
+        if item_id == "fork-item-head":
+            self.dismiss(len(self.messages))
+            return
+        # "fork-item-<idx>"
+        idx = int(item_id.rsplit("-", 1)[1])
+        self.dismiss(idx + 1)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class MCPModal(ModalScreen[tuple[str, str | None] | None]):
     """Modal for browsing and managing MCP servers."""
 

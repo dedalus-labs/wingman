@@ -82,8 +82,8 @@ def test_list_forks_filters_by_parent(isolated_sessions):
 
 
 @pytest.mark.asyncio
-async def test_fork_new_panel_shows_parent_messages(isolated_sessions):
-    """Regression: the forked panel must render the parent's messages, not welcome."""
+async def test_fork_full_clone_renders_parent_messages(isolated_sessions):
+    """Regression: forked panel must render the parent's messages, not welcome splash."""
     from wingman.app import WingmanApp
 
     app = WingmanApp()
@@ -98,28 +98,46 @@ async def test_fork_new_panel_shows_parent_messages(isolated_sessions):
             session_id="parent-sess",
         )
 
-        app._cmd_fork("")
+        app._cmd_fork("0")  # rewind 0 turns = full clone, no picker
         await pilot.pause()
         await pilot.pause()  # let on_mount + refresh queue drain
 
         assert len(app.panels) == 2
         fork_panel = app.panels[1]
 
-        # The fork's session_id is set and its parent is the original.
         from wingman.sessions import get_session_parent
 
         assert fork_panel.session_id is not None
         assert get_session_parent(fork_panel.session_id) == "parent-sess"
 
-        # The scrollback shows the parent's turns, not the welcome splash.
         widgets = _loaded_message_widgets(fork_panel)
         assert len(widgets) == 2, (
             f"Expected 2 ChatMessage widgets in forked panel, got {len(widgets)}. "
             f"Children: {[type(c).__name__ for c in fork_panel.get_chat_container().children]}"
         )
-        # And the panel's messages list matches.
         assert len(fork_panel.messages) == 2
         assert fork_panel.messages[0]["content"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_bare_fork_opens_picker_modal(isolated_sessions):
+    """`/fork` with no args pushes the picker — does not create a panel directly."""
+    from wingman.app import WingmanApp
+    from wingman.ui.modals import ForkPickerModal
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        _seed_panel(
+            app.active_panel,
+            [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+            session_id="p",
+        )
+        app._cmd_fork("")
+        await pilot.pause()
+
+        # Modal is on the screen stack. No new panel yet.
+        assert isinstance(app.screen, ForkPickerModal)
+        assert len(app.panels) == 1
 
 
 @pytest.mark.asyncio
@@ -197,11 +215,14 @@ async def test_fork_rewind_too_many_is_rejected(isolated_sessions):
 @pytest.mark.asyncio
 async def test_fork_with_no_messages_is_rejected(isolated_sessions):
     from wingman.app import WingmanApp
+    from wingman.ui.modals import ForkPickerModal
 
     app = WingmanApp()
     async with app.run_test() as pilot:
         app._cmd_fork("")
         await pilot.pause()
+        # No messages: picker is not opened either.
+        assert not isinstance(app.screen, ForkPickerModal)
         assert len(app.panels) == 1
 
 
@@ -226,22 +247,128 @@ async def test_fork_respects_panel_cap(isolated_sessions):
 
     app = WingmanApp()
     async with app.run_test() as pilot:
-        # Open 3 more panels (total 4).
         for _ in range(3):
             app.action_split_panel()
             await pilot.pause()
         assert len(app.panels) == 4
 
-        # Seed the active panel.
         _seed_panel(
             app.active_panel,
             [{"role": "user", "content": "q1"}],
             session_id="capped",
         )
+        app._cmd_fork("0")  # full clone via shortcut, bypassing picker
+        await pilot.pause()
+
+        assert len(app.panels) == 4
+        assert len(list_forks("capped")) == 1
+
+
+# ---------------------------------------------------------------- picker modal
+
+
+@pytest.mark.asyncio
+async def test_picker_cancel_does_nothing(isolated_sessions):
+    from wingman.app import WingmanApp
+    from wingman.sessions import list_forks
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        _seed_panel(
+            app.active_panel,
+            [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+            session_id="p",
+        )
+        app._cmd_fork("")
+        await pilot.pause()
+        # Dismiss as the user would with Esc.
+        app.screen.action_cancel()
+        await pilot.pause()
+        assert len(app.panels) == 1
+        assert list_forks("p") == []
+
+
+@pytest.mark.asyncio
+async def test_picker_fork_at_index_keeps_through_selected(isolated_sessions):
+    """Selecting message index i dismisses with cut_at=i+1, so the fork includes i."""
+    from wingman.app import WingmanApp
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        _seed_panel(
+            app.active_panel,
+            [
+                {"role": "user", "content": "q1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "q2"},
+                {"role": "assistant", "content": "a2"},
+            ],
+            session_id="p",
+        )
         app._cmd_fork("")
         await pilot.pause()
 
-        # No 5th panel.
-        assert len(app.panels) == 4
-        # But a fork session was created on disk.
-        assert len(list_forks("capped")) == 1
+        # Pick message index 1 (assistant 'a1'): fork should keep [q1, a1].
+        app.screen.dismiss(2)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(app.panels) == 2
+        fork = app.panels[1]
+        assert [m["content"] for m in fork.messages] == ["q1", "a1"]
+
+
+@pytest.mark.asyncio
+async def test_picker_head_option_clones_all(isolated_sessions):
+    from wingman.app import WingmanApp
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        msgs = [
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+        ]
+        _seed_panel(app.active_panel, msgs, session_id="p")
+        app._cmd_fork("")
+        await pilot.pause()
+
+        # HEAD row dismisses with len(messages).
+        app.screen.dismiss(len(msgs))
+        await pilot.pause()
+        await pilot.pause()
+
+        fork = app.panels[1]
+        assert [m["content"] for m in fork.messages] == ["q1", "a1"]
+
+
+def test_picker_format_row_handles_segments_and_lists():
+    """Preview string is generated defensively for all message shapes."""
+    from wingman.ui.modals import ForkPickerModal
+
+    modal = ForkPickerModal(messages=[])
+
+    # Plain string content.
+    row = modal._format_row(0, {"role": "user", "content": "hello world"})
+    assert "user" in row
+    assert "hello world" in row
+
+    # List content (multimodal).
+    row = modal._format_row(1, {"role": "user", "content": [{"type": "text", "text": "hi"}]})
+    assert "hi" in row
+
+    # Segment-based assistant message with a tool call.
+    row = modal._format_row(
+        2,
+        {
+            "role": "assistant",
+            "segments": [{"type": "text", "content": "ran"}, {"type": "tool", "command": "ls"}],
+        },
+    )
+    assert "ran" in row
+    assert "ls" in row
+
+    # Long content is truncated.
+    long = "x" * 200
+    row = modal._format_row(3, {"role": "user", "content": long})
+    assert "..." in row
+    assert "x" * 200 not in row

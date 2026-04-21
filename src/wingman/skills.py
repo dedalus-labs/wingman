@@ -258,7 +258,7 @@ class SkillManager:
             List of skills where user_invocable is True.
 
         """
-        return [s for s in self.registry.values() if s.user_invocable]
+        return [skill for skill in self.registry.values() if skill.user_invocable]
 
     def get(self, name: str) -> Skill | None:
         """Look up a skill by name.
@@ -295,4 +295,4 @@ class SkillManager:
             List of skill names that are user-invocable.
 
         """
-        return [s.name for s in self.list_skills()]
+        return [skill.name for skill in self.list_skills()]

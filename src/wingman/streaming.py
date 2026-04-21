@@ -110,7 +110,7 @@ class StreamingController:
                 thinking.remove()
 
             # Remove transient skill prompts before saving
-            panel.messages = [m for m in panel.messages if not m.get("_skill")]
+            panel.messages = [msg for msg in panel.messages if not msg.get("_skill")]
 
             segments = get_segments(panel.panel_id)
             if segments:
@@ -171,7 +171,7 @@ class StreamingController:
                         content_parts.append(f"\n[Tool: {cmd}]\n{output}\n")
                 messages.append({"role": msg["role"], "content": "".join(content_parts)})
             else:
-                clean = {k: v for k, v in msg.items() if not k.startswith("_")}
+                clean = {key: val for key, val in msg.items() if not key.startswith("_")}
                 messages.append(clean)
 
         if images and messages and messages[-1].get("role") == "user":
@@ -184,7 +184,7 @@ class StreamingController:
                 system_content += f"\n\n{instructions}"
             memory = load_memory()
             if memory.entries:
-                memory_text = "\n".join(e.content for e in memory.entries)
+                memory_text = "\n".join(entry.content for entry in memory.entries)
                 system_content += f"\n\n## Project Memory\n{memory_text}"
             messages = [{"role": "system", "content": system_content}] + messages
 
@@ -314,7 +314,7 @@ class StreamingController:
             with contextlib.suppress(Exception):
                 sw.remove()
         # Clean up transient skill prompts
-        panel.messages = [m for m in panel.messages if not m.get("_skill")]
+        panel.messages = [msg for msg in panel.messages if not msg.get("_skill")]
         segments = get_segments(panel.panel_id)
         if segments:
             panel.messages.append({"role": "assistant", "segments": segments})

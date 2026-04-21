@@ -242,9 +242,9 @@ class EventHandler:
         from .ui import Thinking
 
         panel = None
-        for p in self.app.panels:
-            if p.panel_id in event.input.id:
-                panel = p
+        for candidate in self.app.panels:
+            if candidate.panel_id in event.input.id:
+                panel = candidate
                 break
         if not panel:
             return

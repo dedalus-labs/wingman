@@ -175,9 +175,9 @@ class Commands:
             self.app.show_info("[dim]No skills found. Add skills to .agents/skills/[/]")
             return
         lines = ["[bold #7aa2f7]Skills[/] (use /skill-name to invoke)\n"]
-        for s in skills:
-            hint = f" [dim]{s.argument_hint}[/]" if s.argument_hint else ""
-            lines.append(f"  [#7aa2f7]/{s.name}[/]{hint}  [dim]{s.description[:60]}[/]")
+        for skill in skills:
+            hint = f" [dim]{skill.argument_hint}[/]" if skill.argument_hint else ""
+            lines.append(f"  [#7aa2f7]/{skill.name}[/]{hint}  [dim]{skill.description[:60]}[/]")
         self.app.show_info("\n".join(lines))
 
     def ls(self, arg: str) -> None:
@@ -501,7 +501,7 @@ Useful for: API patterns, file locations, conventions.
                 if msg["role"] in ("user", "assistant") and msg.get("content"):
                     content = msg["content"]
                     if isinstance(content, list):
-                        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+                        content = " ".join(part.get("text", "") for part in content if isinstance(part, dict))
                     panel.messages.append({"role": msg["role"], "content": content})
                     count += 1
             self.app.update_status()

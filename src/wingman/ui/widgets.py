@@ -244,14 +244,19 @@ class MultilineInput(Input):
 class ChatMessage(Static):
     """Single chat message."""
 
-    def __init__(self, role: str, content: str, **kwargs):
+    def __init__(self, role: str, content: str, image_count: int = 0, **kwargs):
         super().__init__(**kwargs)
         self.role = role
         self.content = content
+        self.image_count = image_count
 
     def compose(self) -> ComposeResult:
         if self.role == "user":
-            yield Static(Text.from_markup(f"[#7aa2f7]>[/] {escape(self.content)}"))
+            body = f"[#7aa2f7]>[/] {escape(self.content)}"
+            if self.image_count:
+                plural = "s" if self.image_count != 1 else ""
+                body += f" [#7dcfff]\\[{self.image_count} image{plural}\\][/]"
+            yield Static(Text.from_markup(body))
         else:
             yield Static(Text.from_markup("[bold #bb9af7]Assistant[/]"))
             yield Static(Markdown(self.content))
@@ -655,9 +660,7 @@ class ChatPanel(Vertical):
         msg = create_image_message_from_cache(text, images)
         self.messages.append(msg)
         chat = self.get_chat_container()
-        img_indicator = f" [#7dcfff][{len(images)} image{'s' if len(images) != 1 else ''}][/]"
-        display_text = (text or "(image)") + img_indicator
-        chat.mount(ChatMessage(role, display_text))
+        chat.mount(ChatMessage(role, text or "(image)", image_count=len(images)))
         self.get_scroll_container().scroll_end(animate=False)
 
     def show_info(self, text: str) -> None:
@@ -735,9 +738,7 @@ class ChatPanel(Vertical):
                 text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
                 img_count = sum(1 for p in content if isinstance(p, dict) and p.get("type") == "image_url")
                 display_text = " ".join(text_parts) or "(image)"
-                if img_count:
-                    display_text += f" [#7dcfff][{img_count} image{'s' if img_count != 1 else ''}][/]"
-                chat.mount(ChatMessage(msg["role"], display_text))
+                chat.mount(ChatMessage(msg["role"], display_text, image_count=img_count))
             else:
                 chat.mount(ChatMessage(msg["role"], content))
         self.get_scroll_container().scroll_end(animate=False)

@@ -12,7 +12,8 @@ version = "0.4.3"
 description = "AI-powered TUI coding assistant for the terminal"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Aryan Mahajan", email = "aryan@dedalus.ai" },
     { name = "Dedalus Labs", email = "oss@dedaluslabs.ai" },
@@ -34,7 +35,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

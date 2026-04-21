@@ -16,7 +16,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static, Tree
 
-from .checkpoints import get_checkpoint_manager, set_current_session
+from .checkpoints import get_checkpoint_manager
 from .command_completion import get_hint_candidates
 from .commands import Commands
 from .config import (
@@ -27,21 +27,16 @@ from .config import (
     MODELS,
     fetch_marketplace_servers,
     load_api_key,
-    load_instructions,
 )
 from .context import AUTO_COMPACT_THRESHOLD
-from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
+from .images import cache_image_immediately, is_image_path
 from .memory import load_memory
 from .sessions import load_sessions, save_session
+from .streaming import StreamingController
 from .tools import (
-    CODING_SYSTEM_PROMPT,
-    add_text_segment,
     check_completed_processes,
-    clear_segments,
-    create_tools,
     get_background_processes,
     get_pending_edit,
-    get_segments,
     request_background,
     set_app_instance,
 )
@@ -54,7 +49,6 @@ from .ui import (
     InputModal,
     MultilineInput,
     SelectionModal,
-    StreamingText,
     Thinking,
     ToolApproval,
 )
@@ -92,6 +86,7 @@ class WingmanApp(App):
         super().__init__()
         set_app_instance(self)
         self.cmds = Commands(self)
+        self.streaming = StreamingController(self)
         self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None
         self.runner: DedalusRunner | None = None
@@ -260,49 +255,6 @@ class WingmanApp(App):
 
   {"[#f7768e]LOW - consider /compact[/]" if ctx.needs_compacting else "[#9ece6a]OK[/]"}"""
         self.show_info(info)
-
-    @work(thread=False)
-    async def do_compact(self) -> None:
-        """Manually trigger context compaction."""
-        panel = self.active_panel
-        if not panel:
-            return
-        if self.client is None:
-            self.show_info("[#f7768e]Please enter your API key first.[/]")
-            return
-        if len(panel.context.messages) < 4:
-            self.show_info("Not enough messages to compact")
-            return
-
-        chat = panel.get_chat_container()
-        thinking = Thinking(id="compact-thinking")
-        chat.mount(thinking)
-        self.show_info("Compacting context...")
-
-        try:
-            result = await panel.context.compact(self.client)
-            thinking.remove()
-            self.show_info(f"[#9ece6a]{result}[/]")
-            self.update_status()
-            if panel.session_id:
-                save_session(panel.session_id, panel.context.messages)
-        except Exception as e:
-            thinking.remove()
-            self.show_info(f"[#f7768e]Compact failed: {e}[/]")
-
-    async def _check_auto_compact(self, panel: ChatPanel) -> None:
-        """Auto-compact if context is running low."""
-        if self.client is None:
-            return
-        if panel.context.needs_compacting:
-            remaining = int((1.0 - panel.context.usage_percent) * 100)
-            panel.show_info(f"[#e0af68]Context low ({remaining}% remaining) - auto-compacting...[/]")
-            try:
-                result = await panel.context.compact(self.client)
-                panel.show_info(f"[#9ece6a]{result}[/]")
-                self.update_status()
-            except Exception as e:
-                panel.show_info(f"[#f7768e]Auto-compact failed: {e}[/]")
 
     def on_descendant_focus(self, event) -> None:
         """Set panel as active when any of its descendants receives focus."""
@@ -578,196 +530,7 @@ class WingmanApp(App):
         chat.mount(thinking)
         panel.get_scroll_container().scroll_end(animate=False)
 
-        self._send_message(panel, text, thinking, images_to_send)
-
-    @work(thread=False)
-    async def _send_message(
-        self, panel: ChatPanel, text: str, thinking: Thinking, images: list[CachedImage] | None = None
-    ) -> None:
-        if self.runner is None:
-            thinking.remove()
-            panel.add_message("assistant", "Please enter your API key first.")
-            self.push_screen(APIKeyScreen(), self.on_api_key_entered)
-            return
-        try:
-            # Build messages with system prompt if in coding mode
-            # Convert segment-based messages to content format for the model
-            messages = []
-            for msg in panel.messages:
-                if msg.get("segments"):
-                    # Include both text and tool outputs so model has full context
-                    content_parts = []
-                    for seg in msg["segments"]:
-                        if seg.get("type") == "text":
-                            content_parts.append(seg["content"])
-                        elif seg.get("type") == "tool":
-                            # Include tool results so model knows what it did
-                            cmd = seg.get("command", "")
-                            output = seg.get("output", "")
-                            content_parts.append(f"\n[Tool: {cmd}]\n{output}\n")
-                    messages.append({"role": msg["role"], "content": "".join(content_parts)})
-                else:
-                    messages.append(msg.copy())
-
-            # Replace the last user message with image version if images were attached
-            if images and messages and messages[-1].get("role") == "user":
-                messages[-1] = create_image_message_from_cache(text, images)
-
-            if self.coding_mode:
-                system_content = CODING_SYSTEM_PROMPT.format(cwd=panel.working_dir)
-                # Include custom instructions (global first, then local)
-                instructions = load_instructions(panel.working_dir)
-                if instructions:
-                    system_content += f"\n\n{instructions}"
-                # Include project memory if available
-                memory = load_memory()
-                if memory.entries:
-                    memory_text = "\n".join(e.content for e in memory.entries)
-                    system_content += f"\n\n## Project Memory\n{memory_text}"
-                system_msg = {"role": "system", "content": system_content}
-                messages = [system_msg] + messages
-
-            kwargs = {
-                "messages": messages,
-                "model": self.model,
-                "stream": True,
-            }
-            if panel.mcp_servers:
-                kwargs["mcp_servers"] = panel.mcp_servers
-            if self.coding_mode:
-                kwargs["tools"] = create_tools(panel.working_dir, panel.panel_id, panel.session_id)
-
-            # Set session context for checkpoint tracking
-            set_current_session(panel.session_id)
-            clear_segments(panel.panel_id)  # Clear segment tracking for new response
-            chat = panel.get_chat_container()
-
-            streaming_widget = None
-            widget_id = int(time.time() * 1000)  # Unique base ID per message
-
-            panel._generating = True
-            panel._cancel_requested = False
-            was_cancelled = False
-            self.update_status()
-            try:
-                stream = self.runner.run(**kwargs)
-
-                # Handle both stream manager (event API) and raw iterator
-                # Stream manager has __aenter__ but not __aiter__
-                if hasattr(stream, "__aenter__") and not hasattr(stream, "__aiter__"):
-                    # Event API stream (e.g., Gemini)
-                    async with stream as event_stream:
-                        async for event in event_stream:
-                            if panel._cancel_requested:
-                                was_cancelled = True
-                                break
-                            # Handle content.delta events
-                            if hasattr(event, "type") and event.type == "content.delta":
-                                content = getattr(event, "delta", None)
-                                if content:
-                                    if streaming_widget is None:
-                                        widget_id += 1
-                                        streaming_widget = StreamingText(id=f"streaming-{widget_id}")
-                                        try:
-                                            chat.mount(streaming_widget, before=thinking)
-                                        except Exception:
-                                            # Thinking widget was removed (cancelled)
-                                            was_cancelled = True
-                                            break
-                                    add_text_segment(content, panel.panel_id)
-                                    streaming_widget.append_text(content)
-                                    panel.get_scroll_container().scroll_end(animate=False)
-                                    await asyncio.sleep(0)
-                else:
-                    # Raw chunk iterator (OpenAI-style)
-                    async for chunk in stream:
-                        if panel._cancel_requested:
-                            was_cancelled = True
-                            break
-                        if hasattr(chunk, "choices") and chunk.choices:
-                            delta = chunk.choices[0].delta
-
-                            # Tool call detected - finalize current text segment
-                            if hasattr(delta, "tool_calls") and delta.tool_calls and streaming_widget is not None:
-                                streaming_widget.mark_complete()
-                                streaming_widget = None
-
-                            # Stream text content
-                            if hasattr(delta, "content") and delta.content:
-                                if streaming_widget is None:
-                                    widget_id += 1
-                                    streaming_widget = StreamingText(id=f"streaming-{widget_id}")
-                                    try:
-                                        chat.mount(streaming_widget, before=thinking)
-                                    except Exception:
-                                        # Thinking widget was removed (cancelled)
-                                        was_cancelled = True
-                                        break
-                                add_text_segment(delta.content, panel.panel_id)
-                                streaming_widget.append_text(delta.content)
-                                panel.get_scroll_container().scroll_end(animate=False)
-                                await asyncio.sleep(0)
-            finally:
-                panel._generating = False
-                set_current_session(None)
-
-            if streaming_widget is not None:
-                streaming_widget.mark_complete()
-            self.update_status()
-
-            with contextlib.suppress(Exception):
-                thinking.remove()
-
-            segments = get_segments(panel.panel_id)
-            if segments:
-                panel.messages.append({"role": "assistant", "segments": segments})
-                save_session(panel.session_id, panel.messages)
-            elif not was_cancelled:
-                self.show_info("[#e0af68]Response ended with no content[/]")
-
-            self.update_status()
-            await self._check_auto_compact(panel)
-
-        except asyncio.TimeoutError:
-            with contextlib.suppress(Exception):
-                thinking.remove()
-            for sw in self.query(StreamingText):
-                with contextlib.suppress(Exception):
-                    sw.remove()
-            # Save any partial segments before showing error
-            segments = get_segments(panel.panel_id)
-            if segments:
-                panel.messages.append({"role": "assistant", "segments": segments})
-                save_session(panel.session_id, panel.messages)
-            else:
-                # Only remove user message if there was no assistant response at all
-                if panel.messages and panel.messages[-1].get("role") == "user":
-                    panel.messages.pop()
-            self.show_info("[#f7768e]Request timed out[/]")
-
-        except Exception as e:
-            # Clean up thinking spinner
-            with contextlib.suppress(Exception):
-                thinking.remove()
-            # Clean up any streaming widgets
-            for sw in self.query(StreamingText):
-                with contextlib.suppress(Exception):
-                    sw.remove()
-            # Save any partial segments before handling error
-            segments = get_segments(panel.panel_id)
-            if segments:
-                panel.messages.append({"role": "assistant", "segments": segments})
-                save_session(panel.session_id, panel.messages)
-            else:
-                # Only remove user message if there was no assistant response at all
-                if panel.messages and panel.messages[-1].get("role") == "user":
-                    panel.messages.pop()
-            error_msg = str(e)
-            if "timeout" in error_msg.lower():
-                self.show_info("[#f7768e]Request timed out[/]")
-            elif "cancelled" not in error_msg.lower():
-                # Don't show error for cancellations, and don't use Rich markup
-                panel.add_message("assistant", f"Error: {error_msg}")
+        self.streaming.send_message(panel, text, thinking, images_to_send)
 
     def show_diff_approval(self) -> None:
         """Show diff modal for pending edit approval. Called from tool thread."""

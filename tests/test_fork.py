@@ -289,8 +289,8 @@ async def test_picker_cancel_does_nothing(isolated_sessions):
 
 
 @pytest.mark.asyncio
-async def test_picker_fork_at_index_keeps_through_selected(isolated_sessions):
-    """Selecting message index i dismisses with cut_at=i+1, so the fork includes i."""
+async def test_picker_assistant_row_branches_after(isolated_sessions):
+    """Selecting an assistant row forks AFTER it: fork keeps [..., selected]."""
     from wingman.app import WingmanApp
 
     app = WingmanApp()
@@ -308,14 +308,48 @@ async def test_picker_fork_at_index_keeps_through_selected(isolated_sessions):
         app._cmd_fork("")
         await pilot.pause()
 
-        # Pick message index 1 (assistant 'a1'): fork should keep [q1, a1].
-        app.screen.dismiss(2)
+        # Assistant 'a1' is at index 1. Fork-after = (2, None).
+        app.screen.dismiss((2, None))
         await pilot.pause()
         await pilot.pause()
 
         assert len(app.panels) == 2
         fork = app.panels[1]
         assert [m["content"] for m in fork.messages] == ["q1", "a1"]
+        # No prefill for assistant rows: input is empty.
+        assert fork.get_input().value == ""
+
+
+@pytest.mark.asyncio
+async def test_picker_user_row_forks_before_and_prefills(isolated_sessions):
+    """Selecting a user row drops that message and prefills the input for rewriting."""
+    from wingman.app import WingmanApp
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        _seed_panel(
+            app.active_panel,
+            [
+                {"role": "user", "content": "q1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "q2 original"},
+                {"role": "assistant", "content": "a2"},
+            ],
+            session_id="p",
+        )
+        app._cmd_fork("")
+        await pilot.pause()
+
+        # User 'q2 original' is at index 2. Picker dispatches (2, "q2 original").
+        app.screen.dismiss((2, "q2 original"))
+        await pilot.pause()
+        await pilot.pause()
+
+        fork = app.panels[1]
+        # Fork ends in assistant — clean state, no dangling user turn.
+        assert [m["content"] for m in fork.messages] == ["q1", "a1"]
+        # Input is pre-populated with the original user message text.
+        assert fork.get_input().value == "q2 original"
 
 
 @pytest.mark.asyncio
@@ -332,13 +366,40 @@ async def test_picker_head_option_clones_all(isolated_sessions):
         app._cmd_fork("")
         await pilot.pause()
 
-        # HEAD row dismisses with len(messages).
-        app.screen.dismiss(len(msgs))
+        # HEAD row dismisses with (len(messages), None).
+        app.screen.dismiss((len(msgs), None))
         await pilot.pause()
         await pilot.pause()
 
         fork = app.panels[1]
         assert [m["content"] for m in fork.messages] == ["q1", "a1"]
+        assert fork.get_input().value == ""
+
+
+@pytest.mark.asyncio
+async def test_fork_rewind_shortcut_prefills_last_user_turn(isolated_sessions):
+    """/fork 1 should also pre-fill the input with the rewound user message."""
+    from wingman.app import WingmanApp
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        _seed_panel(
+            app.active_panel,
+            [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "reply1"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "reply2"},
+            ],
+            session_id="p",
+        )
+        app._cmd_fork("1")
+        await pilot.pause()
+        await pilot.pause()
+
+        fork = app.panels[1]
+        assert [m["content"] for m in fork.messages] == ["first", "reply1"]
+        assert fork.get_input().value == "second"
 
 
 def test_picker_format_row_handles_segments_and_lists():

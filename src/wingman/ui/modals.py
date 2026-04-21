@@ -193,12 +193,30 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
         self.dismiss(None)
 
 
-class ForkPickerModal(ModalScreen[int | None]):
+def _message_text(msg: dict) -> str:
+    """Flatten a message's content to plain text for previews and input prefill."""
+    content = msg.get("content") or ""
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+class ForkPickerModal(ModalScreen[tuple[int, str | None] | None]):
     """Pick a point in the active conversation to fork from.
 
-    Dismisses with a cut_at index (fork keeps messages[:cut_at]) or None if
-    canceled. The top "HEAD" row clones everything; selecting message N
-    forks AFTER N, so the fork contains messages[0..N] inclusive.
+    Dismisses with (cut_at, prefill) or None if canceled. The fork keeps
+    messages[:cut_at]. If prefill is not None, the new panel's input field is
+    seeded with that text.
+
+    Semantics by role:
+      HEAD row     : (len(messages), None)        - clone everything
+      user row N   : (N, original_text)           - fork BEFORE the user msg;
+                                                    prefill input so the user
+                                                    can rewrite that turn.
+      other row N  : (N + 1, None)                - fork AFTER; branch from
+                                                    the response.
     """
 
     BINDINGS = [
@@ -237,7 +255,7 @@ class ForkPickerModal(ModalScreen[int | None]):
                 )
             yield ListView(*items)
             yield Static(
-                "Fork contains everything up to and including the selected message.",
+                "User msg = rewrite that turn (input pre-filled).  Assistant msg = branch after that response.",
                 classes="hint",
             )
             yield Static(
@@ -247,9 +265,7 @@ class ForkPickerModal(ModalScreen[int | None]):
 
     def _format_row(self, idx: int, msg: dict) -> str:
         role = msg.get("role", "?")
-        content = msg.get("content") or ""
-        if isinstance(content, list):
-            content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+        content = _message_text(msg)
         # Segment-based assistant messages: flatten text+tool to a preview.
         if not content and "segments" in msg:
             parts = []
@@ -283,11 +299,18 @@ class ForkPickerModal(ModalScreen[int | None]):
             return
         item_id = event.item.id
         if item_id == "fork-item-head":
-            self.dismiss(len(self.messages))
+            self.dismiss((len(self.messages), None))
             return
-        # "fork-item-<idx>"
         idx = int(item_id.rsplit("-", 1)[1])
-        self.dismiss(idx + 1)
+        msg = self.messages[idx]
+        if msg.get("role") == "user":
+            # Fork BEFORE: drops this user msg; prefill input with its text so
+            # the user can edit the turn. Resulting fork ends in an assistant
+            # response (clean state).
+            self.dismiss((idx, _message_text(msg)))
+        else:
+            # Fork AFTER: assistant/tool/other. Keep through the selected row.
+            self.dismiss((idx + 1, None))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

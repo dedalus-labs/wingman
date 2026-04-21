@@ -915,13 +915,18 @@ class WingmanApp(App):
         new_panel.set_active(True)
         self._update_status()
 
-    def _create_panel(self, *, initial_session_id: str | None = None) -> ChatPanel | None:
+    def _create_panel(
+        self,
+        *,
+        initial_session_id: str | None = None,
+        initial_input: str | None = None,
+    ) -> ChatPanel | None:
         """Create and mount a new panel, returning it. Returns None if at panel cap."""
         if len(self.panels) >= 4:
             self._show_info("Maximum 4 panels allowed")
             return None
         container = self.query_one("#panels-container", Horizontal)
-        panel = ChatPanel(initial_session_id=initial_session_id)
+        panel = ChatPanel(initial_session_id=initial_session_id, initial_input=initial_input)
         self.panels.append(panel)
         container.mount(panel)
         # Refresh welcome art on existing panels after layout recalculates
@@ -1405,21 +1410,28 @@ Useful for: API patterns, file locations, conventions.
             return
 
         cut_at = len(panel.messages)
+        prefill: str | None = None
         if n > 0:
             user_indexes = [i for i, m in enumerate(panel.messages) if m.get("role") == "user"]
             if len(user_indexes) < n:
                 self._show_info(f"Cannot rewind {n}: only {len(user_indexes)} user turns in history")
                 return
             cut_at = user_indexes[-n]
+            # Mirror the picker's user-row behavior: pre-fill the input with the
+            # rewound user turn so it can be edited.
+            from .ui.modals import _message_text
 
-        self._do_fork_at(cut_at)
+            prefill = _message_text(panel.messages[cut_at])
 
-    def _on_fork_picked(self, cut_at: int | None) -> None:
-        if cut_at is None:
+        self._do_fork_at(cut_at, prefill=prefill)
+
+    def _on_fork_picked(self, result: tuple[int, str | None] | None) -> None:
+        if result is None:
             return
-        self._do_fork_at(cut_at)
+        cut_at, prefill = result
+        self._do_fork_at(cut_at, prefill=prefill)
 
-    def _do_fork_at(self, cut_at: int) -> None:
+    def _do_fork_at(self, cut_at: int, *, prefill: str | None = None) -> None:
         """Create a fork of the active panel's session keeping messages[:cut_at]."""
         panel = self.active_panel
         if not panel:
@@ -1449,7 +1461,7 @@ Useful for: API patterns, file locations, conventions.
         # Toast before creating the panel: _show_info would target the new
         # panel whose chat container isn't composed yet.
         self.notify(f"Forked at message {cut_at}: {new_id}", timeout=3.0)
-        self._create_panel(initial_session_id=new_id)
+        self._create_panel(initial_session_id=new_id, initial_input=prefill)
         self._refresh_sessions()
 
     def _cmd_forks(self, arg: str) -> None:

@@ -548,7 +548,14 @@ class ChatPanel(Vertical):
         Binding("escape", "focus_input", "Focus Input", show=False),
     ]
 
-    def __init__(self, panel_id: str | None = None, *, initial_session_id: str | None = None, **kwargs):
+    def __init__(
+        self,
+        panel_id: str | None = None,
+        *,
+        initial_session_id: str | None = None,
+        initial_input: str | None = None,
+        **kwargs,
+    ):
         global _panel_counter
         if panel_id is None:
             _panel_counter += 1
@@ -566,6 +573,9 @@ class ChatPanel(Vertical):
         # If set, on_mount will load this session instead of showing the welcome splash.
         # The welcome-vs-load decision happens here so there's no render race.
         self._initial_session_id = initial_session_id
+        # Optional text to seed the Input with after load_session runs (used by
+        # fork-rewrite flow to pre-populate the user's message for editing).
+        self._initial_input = initial_input
 
     @property
     def messages(self) -> list[dict]:
@@ -590,10 +600,23 @@ class ChatPanel(Vertical):
     def on_mount(self) -> None:
         if self._initial_session_id is not None:
             sid = self._initial_session_id
+            prefill = self._initial_input
             self._initial_session_id = None
-            self.call_after_refresh(lambda: self.load_session(sid))
+            self._initial_input = None
+            self.call_after_refresh(lambda: self._boot_with_session(sid, prefill))
         else:
             self.call_after_refresh(self._show_welcome)
+
+    def _boot_with_session(self, session_id: str, prefill: str | None) -> None:
+        """Load a session at mount time and optionally seed the input field."""
+        self.load_session(session_id)
+        if prefill:
+            try:
+                inp = self.get_input()
+                inp.value = prefill
+                inp.focus()
+            except Exception:
+                pass
 
     def _show_welcome(self, force_compact: bool = False) -> None:
         chat = self.query_one(f"#{self.panel_id}-chat", Vertical)

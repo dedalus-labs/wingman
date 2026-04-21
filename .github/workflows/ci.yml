@@ -31,7 +31,7 @@ jobs:
         run: uv run ruff format --check src/wingman/
 
       - name: Type check
-        run: uv run ty check src/wingman/
+        run: uv run ty check --python-version 3.10 --output-format github src/wingman/
         continue-on-error: true
 
   test:

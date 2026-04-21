@@ -30,6 +30,10 @@ jobs:
       - name: Format check
         run: uv run ruff format --check src/wingman/
 
+      - name: Type check
+        run: uv run ty check src/wingman/
+        continue-on-error: true
+
   test:
     runs-on: ubuntu-latest
     steps:

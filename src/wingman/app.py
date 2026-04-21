@@ -1,6 +1,7 @@
 """Main Wingman application."""
 
 import asyncio
+import contextlib
 import re
 import time
 import webbrowser
@@ -118,11 +119,10 @@ class WingmanApp(App):
             with Vertical(id="sidebar") as sidebar:
                 sidebar.border_title = "Sessions"
                 yield Tree("Chats", id="sessions")
-            with Vertical(id="main"):
-                with Horizontal(id="panels-container"):
-                    panel = ChatPanel()
-                    self.panels.append(panel)
-                    yield panel
+            with Vertical(id="main"), Horizontal(id="panels-container"):
+                panel = ChatPanel()
+                self.panels.append(panel)
+                yield panel
         yield Static(id="status")
 
     def on_mount(self) -> None:
@@ -154,7 +154,7 @@ class WingmanApp(App):
     def _check_background_processes(self) -> None:
         """Periodic check for completed background processes."""
         completed = check_completed_processes()
-        for panel_id, bg_id, exit_code, command in completed:
+        for _panel_id, bg_id, exit_code, command in completed:
             # Shorten command for display
             cmd_short = command[:40] + "..." if len(command) > 40 else command
             if exit_code == 0:
@@ -184,10 +184,7 @@ class WingmanApp(App):
         img_text = f" │ [#7dcfff]{img_count} image{'s' if img_count != 1 else ''}[/]" if img_count else ""
 
         # Context remaining indicator
-        if panel:
-            remaining = 1.0 - panel.context.usage_percent
-        else:
-            remaining = 1.0
+        remaining = 1.0 - panel.context.usage_percent if panel else 1.0
         if remaining <= (1.0 - AUTO_COMPACT_THRESHOLD):
             ctx_color = "#f7768e"
         elif remaining <= 0.4:
@@ -411,16 +408,12 @@ class WingmanApp(App):
                 self._update_status()
                 # Remove thinking spinners
                 for thinking in panel.query("Thinking"):
-                    try:
+                    with contextlib.suppress(Exception):
                         thinking.remove()
-                    except Exception:
-                        pass
                 # Remove pending tool approvals
                 for approval in panel.query("ToolApproval"):
-                    try:
+                    with contextlib.suppress(Exception):
                         approval.remove()
-                    except Exception:
-                        pass
                 self.notify("Generation cancelled", severity="warning", timeout=2)
                 event.stop()
                 event.prevent_default()
@@ -696,10 +689,9 @@ class WingmanApp(App):
                             delta = chunk.choices[0].delta
 
                             # Tool call detected - finalize current text segment
-                            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                                if streaming_widget is not None:
-                                    streaming_widget.mark_complete()
-                                    streaming_widget = None
+                            if hasattr(delta, "tool_calls") and delta.tool_calls and streaming_widget is not None:
+                                streaming_widget.mark_complete()
+                                streaming_widget = None
 
                             # Stream text content
                             if hasattr(delta, "content") and delta.content:
@@ -724,10 +716,8 @@ class WingmanApp(App):
                 streaming_widget.mark_complete()
             self._update_status()
 
-            try:
+            with contextlib.suppress(Exception):
                 thinking.remove()
-            except Exception:
-                pass
 
             segments = get_segments(panel.panel_id)
             if segments:
@@ -740,15 +730,11 @@ class WingmanApp(App):
             await self._check_auto_compact(panel)
 
         except asyncio.TimeoutError:
-            try:
+            with contextlib.suppress(Exception):
                 thinking.remove()
-            except Exception:
-                pass
             for sw in self.query(StreamingText):
-                try:
+                with contextlib.suppress(Exception):
                     sw.remove()
-                except Exception:
-                    pass
             # Save any partial segments before showing error
             segments = get_segments(panel.panel_id)
             if segments:
@@ -762,16 +748,12 @@ class WingmanApp(App):
 
         except Exception as e:
             # Clean up thinking spinner
-            try:
+            with contextlib.suppress(Exception):
                 thinking.remove()
-            except Exception:
-                pass
             # Clean up any streaming widgets
             for sw in self.query(StreamingText):
-                try:
+                with contextlib.suppress(Exception):
                     sw.remove()
-                except Exception:
-                    pass
             # Save any partial segments before handling error
             segments = get_segments(panel.panel_id)
             if segments:
@@ -832,10 +814,8 @@ class WingmanApp(App):
                 return ("cancelled", "")
             await asyncio.sleep(0.05)
         result = widget.result
-        try:
+        with contextlib.suppress(Exception):
             widget.remove()
-        except Exception:
-            pass  # Already removed
         # Restore thinking spinner
         if thinking:
             thinking.display = True
@@ -877,16 +857,12 @@ class WingmanApp(App):
             self._update_status()
             # Remove thinking spinners
             for thinking in panel.query("Thinking"):
-                try:
+                with contextlib.suppress(Exception):
                     thinking.remove()
-                except Exception:
-                    pass
             # Remove pending tool approvals
             for approval in panel.query("ToolApproval"):
-                try:
+                with contextlib.suppress(Exception):
                     approval.remove()
-                except Exception:
-                    pass
             self.notify("Generation cancelled", severity="warning", timeout=2)
         elif panel:
             # Clear the input if not generating
@@ -1106,10 +1082,7 @@ class WingmanApp(App):
             try:
                 tree = self.query_one("#sessions", Tree)
                 if tree.cursor_node and tree.cursor_node != tree.root:
-                    if tree.cursor_node.data:
-                        session_id = str(tree.cursor_node.data)
-                    else:
-                        session_id = str(tree.cursor_node.label)
+                    session_id = str(tree.cursor_node.data) if tree.cursor_node.data else str(tree.cursor_node.label)
             except Exception:
                 pass
         if not session_id:
@@ -1206,7 +1179,7 @@ class WingmanApp(App):
             lines = ["[bold #7aa2f7]Checkpoints[/] (use /rollback <id> to restore)\n"]
             for cp in checkpoints:
                 ts = time.strftime("%H:%M:%S", time.localtime(cp.timestamp))
-                files = ", ".join(Path(f).name for f in cp.files.keys())
+                files = ", ".join(Path(f).name for f in cp.files)
                 lines.append(f"  [#9ece6a]{cp.id}[/] [{ts}] {cp.description}")
                 lines.append(f"    [dim]{files}[/]")
             self._show_info("\n".join(lines))

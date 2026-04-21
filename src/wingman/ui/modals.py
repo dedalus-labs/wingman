@@ -1,6 +1,5 @@
 """Modal dialogs and screens."""
 
-import difflib
 import time
 
 from dedalus_labs import AsyncDedalus

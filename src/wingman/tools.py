@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checkpoints import get_checkpoint_manager, get_current_session
+from .checkpoints import get_checkpoint_manager
 
 # Filesystem traversal limits
 IGNORED_DIRS = frozenset(
@@ -323,7 +323,9 @@ def _read_file_impl(
         return output
 
 
-def _write_file_impl(path: str, content: str, working_dir: Path, panel_id: str | None = None, overwrite: bool = False) -> str:
+def _write_file_impl(
+    path: str, content: str, working_dir: Path, panel_id: str | None = None, overwrite: bool = False
+) -> str:
     """Create or overwrite a file with the given content."""
     global _command_widget_counter
     file_path = Path(path)
@@ -457,7 +459,7 @@ def _read_notebook_impl(path: str, working_dir: Path, panel_id: str | None = Non
         _track_tool_call(command, output, "error", panel_id)
         return output
 
-    if not file_path.suffix == ".ipynb":
+    if file_path.suffix != ".ipynb":
         output = f"Error: Not a notebook file: {file_path}"
         _notify_status(widget_id, "error", panel_id=panel_id)
         _track_tool_call(command, output, "error", panel_id)
@@ -525,7 +527,9 @@ def _read_notebook_impl(path: str, working_dir: Path, panel_id: str | None = Non
         result = "\n".join(formatted)
         output_preview = f"{len(cells)} cells"
         _notify_status(widget_id, "success", output_preview, panel_id)
-        tracked = result if len(result) < CONTENT_TRUNCATE_LIMIT else result[:CONTENT_TRUNCATE_LIMIT] + "\n...[truncated]"
+        tracked = (
+            result if len(result) < CONTENT_TRUNCATE_LIMIT else result[:CONTENT_TRUNCATE_LIMIT] + "\n...[truncated]"
+        )
         _track_tool_call(command, tracked, "success", panel_id)
         return result
 
@@ -571,7 +575,7 @@ def _notebook_edit_impl(
         _track_tool_call(command, output, "error", panel_id)
         return output
 
-    if not file_path.suffix == ".ipynb":
+    if file_path.suffix != ".ipynb":
         output = f"Error: Not a notebook file: {file_path}"
         _notify_status(widget_id, "error", panel_id=panel_id)
         _track_tool_call(command, output, "error", panel_id)
@@ -785,7 +789,7 @@ async def _list_files_impl(pattern: str, path: str, working_dir: Path, panel_id:
         output = "Timed out after 15s"
         await _update_command_status(widget_id, "error", output, panel_id)
         _track_tool_call(command, output, "error", panel_id)
-        return f"Listing timed out after 15s. Try a more specific pattern."
+        return "Listing timed out after 15s. Try a more specific pattern."
     except Exception as e:
         output = str(e)
         await _update_command_status(widget_id, "error", output, panel_id)
@@ -809,12 +813,23 @@ def _search_files_sync(
 ) -> list[str]:
     """Search files using ripgrep (preferred) or grep (fallback)."""
     rg_result = _try_ripgrep(
-        pattern, base, file_pattern, context, context_before, context_after,
-        output_mode, multiline, file_type, head_limit, offset
+        pattern,
+        base,
+        file_pattern,
+        context,
+        context_before,
+        context_after,
+        output_mode,
+        multiline,
+        file_type,
+        head_limit,
+        offset,
     )
     if rg_result is not None:
         return rg_result
-    return _search_with_grep(pattern, base, file_pattern, context, context_before, context_after, output_mode, head_limit, offset)
+    return _search_with_grep(
+        pattern, base, file_pattern, context, context_before, context_after, output_mode, head_limit, offset
+    )
 
 
 def _try_ripgrep(
@@ -959,11 +974,21 @@ async def _search_files_impl(
     try:
         results = await asyncio.wait_for(
             asyncio.to_thread(
-                _search_files_sync, pattern, base, file_pattern, working_dir,
-                context, context_before, context_after, output_mode, multiline,
-                file_type, head_limit, offset
+                _search_files_sync,
+                pattern,
+                base,
+                file_pattern,
+                working_dir,
+                context,
+                context_before,
+                context_after,
+                output_mode,
+                multiline,
+                file_type,
+                head_limit,
+                offset,
             ),
-            timeout=30.0
+            timeout=30.0,
         )
         result = "\n".join(results) if results else f"No matches for: {pattern}"
         await _update_command_status(widget_id, "success", result, panel_id)
@@ -973,7 +998,7 @@ async def _search_files_impl(
         output = "Timed out after 30s"
         await _update_command_status(widget_id, "error", output, panel_id)
         _track_tool_call(command, output, "error", panel_id)
-        return f"Search timed out after 30s. Try a more specific path or pattern."
+        return "Search timed out after 30s. Try a more specific path or pattern."
     except Exception as e:
         output = str(e)
         await _update_command_status(widget_id, "error", output, panel_id)
@@ -1191,9 +1216,19 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
         """
         try:
             return await _search_files_impl(
-                pattern, path, file_pattern, working_dir, panel_id, context,
-                context_before, context_after, output_mode, multiline,
-                file_type, head_limit, offset
+                pattern,
+                path,
+                file_pattern,
+                working_dir,
+                panel_id,
+                context,
+                context_before,
+                context_after,
+                output_mode,
+                multiline,
+                file_type,
+                head_limit,
+                offset,
             )
         except Exception as e:
             return f"Error searching files: {e}"
@@ -1237,7 +1272,9 @@ def create_tools(working_dir: Path, panel_id: str | None = None, session_id: str
             edit_mode: "replace" (default), "insert", or "delete".
             cell_type: Cell type ("code" or "markdown"). Required for insert.
         """
-        return _notebook_edit_impl(path, cell_number, new_source, working_dir, panel_id, session_id, edit_mode, cell_type)
+        return _notebook_edit_impl(
+            path, cell_number, new_source, working_dir, panel_id, session_id, edit_mode, cell_type
+        )
 
     return [
         read_file,
@@ -1308,7 +1345,9 @@ When a command is backgrounded, you'll see "[Backgrounded: bg_X]". Use get_proce
 # --- Headless mode implementations (no TUI, auto-approve) ---
 
 
-def _edit_file_impl_headless(path: str, old_string: str, new_string: str, working_dir: Path, replace_all: bool = False) -> str:
+def _edit_file_impl_headless(
+    path: str, old_string: str, new_string: str, working_dir: Path, replace_all: bool = False
+) -> str:
     """Edit a file - headless mode (auto-approve, no checkpoints)."""
     file_path = Path(path)
     if not file_path.is_absolute():
@@ -1353,7 +1392,7 @@ def _notebook_edit_impl_headless(
     if not file_path.exists():
         return f"Error: Notebook not found: {file_path}"
 
-    if not file_path.suffix == ".ipynb":
+    if file_path.suffix != ".ipynb":
         return f"Error: Not a notebook file: {file_path}"
 
     try:
@@ -1487,9 +1526,19 @@ def create_tools_headless(working_dir: Path) -> list:
     ) -> str:
         """Search for a regex pattern in files."""
         return await _search_files_impl(
-            pattern, path, file_pattern, working_dir, None, context,
-            context_before, context_after, output_mode, multiline,
-            file_type, head_limit, offset
+            pattern,
+            path,
+            file_pattern,
+            working_dir,
+            None,
+            context,
+            context_before,
+            context_after,
+            output_mode,
+            multiline,
+            file_type,
+            head_limit,
+            offset,
         )
 
     async def run_command(command: str) -> str:

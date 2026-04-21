@@ -1,0 +1,7 @@
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "align-fields", name = "Column-align fmt:off fields", entry = "python scripts/align-fields.py --check", language = "python", types = ["python"], pass_filenames = false },
+  { id = "ruff-check",   name = "Ruff lint",   entry = "uv run ruff check",          language = "system", types = ["python"] },
+  { id = "ruff-format",  name = "Ruff format",  entry = "uv run ruff format --check", language = "system", types = ["python"] },
+]

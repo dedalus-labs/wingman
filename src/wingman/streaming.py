@@ -109,6 +109,9 @@ class StreamingController:
             with contextlib.suppress(Exception):
                 thinking.remove()
 
+            # Remove transient skill prompts before saving
+            panel.messages = [m for m in panel.messages if not m.get("_skill")]
+
             segments = get_segments(panel.panel_id)
             if segments:
                 panel.messages.append({"role": "assistant", "segments": segments})
@@ -168,7 +171,8 @@ class StreamingController:
                         content_parts.append(f"\n[Tool: {cmd}]\n{output}\n")
                 messages.append({"role": msg["role"], "content": "".join(content_parts)})
             else:
-                messages.append(msg.copy())
+                clean = {k: v for k, v in msg.items() if not k.startswith("_")}
+                messages.append(clean)
 
         if images and messages and messages[-1].get("role") == "user":
             messages[-1] = create_image_message_from_cache(text, images)
@@ -309,6 +313,8 @@ class StreamingController:
         for sw in self.app.query("StreamingText"):
             with contextlib.suppress(Exception):
                 sw.remove()
+        # Clean up transient skill prompts
+        panel.messages = [m for m in panel.messages if not m.get("_skill")]
         segments = get_segments(panel.panel_id)
         if segments:
             panel.messages.append({"role": "assistant", "segments": segments})

@@ -32,6 +32,7 @@ from .events import EventHandler
 from .memory import load_memory
 from .panels import PanelMixin
 from .sessions import load_sessions
+from .skills import SkillManager
 from .streaming import StreamingController
 from .tool_bridge import ToolBridgeMixin
 from .tools import (
@@ -87,6 +88,7 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         self.cmds = Commands(self)
         self.streaming = StreamingController(self)
         self.compaction = CompactionController(self)
+        self.skills = SkillManager(self)
         self.events = EventHandler(self)
         self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None
@@ -133,6 +135,7 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
             self._init_client(api_key)
         else:
             self.push_screen(APIKeyScreen(), self.on_api_key_entered)
+        self.skills.load()
         # Fetch marketplace servers in background
         self._init_dynamic_data()
         # Monitor background processes for completion

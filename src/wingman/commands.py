@@ -72,11 +72,16 @@ class Commands:
             "memory": lambda: self.memory(arg),
             "export": lambda: self.export(arg),
             "import": lambda: self.import_file(arg),
+            "skills": lambda: self.skills_list(),
         }
 
         handler = handlers.get(command)
         if handler:
             handler()
+        elif self.app.skills.get(command):
+            prompt = self.app.skills.invoke(command, arg)
+            if prompt:
+                self.app.show_info(f"[dim]Skill: {command}[/]\n\n{prompt}")
         else:
             self.app.show_info(f"Unknown command: {command}")
 
@@ -104,6 +109,18 @@ class Commands:
     def feature(self) -> None:
         """Open feature request."""
         self.app.open_github_issue("feature_request.yml")
+
+    def skills_list(self) -> None:
+        """List available skills."""
+        skills = self.app.skills.list_skills()
+        if not skills:
+            self.app.show_info("[dim]No skills found. Add skills to .agents/skills/[/]")
+            return
+        lines = ["[bold #7aa2f7]Skills[/] (use /skill-name to invoke)\n"]
+        for s in skills:
+            hint = f" [dim]{s.argument_hint}[/]" if s.argument_hint else ""
+            lines.append(f"  [#7aa2f7]/{s.name}[/]{hint}  [dim]{s.description[:60]}[/]")
+        self.app.show_info("\n".join(lines))
 
     def ls(self, arg: str) -> None:
         """List files in working directory."""

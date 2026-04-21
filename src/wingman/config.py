@@ -112,6 +112,7 @@ COMMANDS = [
     ("/clear", "Clear chat"),
     ("/help", "Show help"),
     ("/exit", "Quit Wingman"),
+    ("/skills", "List available skills"),
     ("/bug", "Report a bug"),
     ("/feature", "Request feature"),
 ]

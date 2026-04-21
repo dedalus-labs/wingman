@@ -137,7 +137,7 @@ def load_api_key() -> str | None:
 def load_base_url() -> str | None:
     """Load API base URL from environment or config.
 
-    Checks ``WINGMAN_BASE_URL`` env var first, then ``base_url`` in
+    Checks ``BASE_URL`` env var first, then ``base_url`` in
     ``~/.wingman/config.json``. Returns None to use the SDK default.
 
     Returns:
@@ -146,7 +146,7 @@ def load_base_url() -> str | None:
     """
     import os
 
-    env_url = os.environ.get("WINGMAN_BASE_URL")
+    env_url = os.environ.get("BASE_URL")
     if env_url:
         return env_url.rstrip("/")
 

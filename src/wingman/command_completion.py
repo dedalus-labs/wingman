@@ -152,8 +152,6 @@ def get_hint_candidates(
             for cmd, desc in COMMANDS
             if search_lower in cmd.lower() or search_lower in desc.lower()
         ]
-        if len(matches) == 1 and matches[0].lstrip("/") == search:
-            return []
         return matches
 
     if context.active_index == 1:
@@ -161,15 +159,10 @@ def get_hint_candidates(
         if not options:
             return []
         prefix = context.active.text
-        matches = _match_options(prefix, options)
-        if len(matches) == 1 and matches[0] == prefix:
-            return []
-        return matches
+        return _match_options(prefix, options)
 
     dynamic = _get_dynamic_matches(context, value, cursor_position, candidate_provider)
     if dynamic:
-        if len(dynamic) == 1 and dynamic[0] == context.active.text:
-            return []
         return dynamic
 
     return []

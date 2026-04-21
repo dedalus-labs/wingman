@@ -48,7 +48,7 @@ class Commands:
             "split":     lambda: self.app.action_split_panel(),
             "close":     lambda: self.app.action_close_panel(),
             "model":     lambda: self.app.action_select_model(),
-            "compact":   lambda: self.app.streaming.compact(),
+            "compact":   lambda: self.app.compaction.compact(),
             "context":   lambda: self.app.show_context_info(),
             "key":       lambda: self.app.push_screen(
                 self._api_key_screen(), self.app.on_api_key_entered

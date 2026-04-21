@@ -117,7 +117,7 @@ class StreamingController:
                 self.app.show_info("[#e0af68]Response ended with no content[/]\n[dim]Use /bug to report this issue[/]")
 
             self.app.update_status()
-            await self.check_auto_compact(panel)
+            await self.app.compaction.check_auto(panel)
 
         except asyncio.TimeoutError:
             self.handle_error(panel, thinking, "[#f7768e]Request timed out[/]")
@@ -319,54 +319,3 @@ class StreamingController:
             self.app.show_info(info_message)
         elif user_message:
             panel.add_message("assistant", user_message)
-
-    # --- Compaction ---
-
-    async def compact(self) -> None:
-        """Manually trigger context compaction."""
-        panel = self.app.active_panel
-        if not panel:
-            return
-        if self.app.client is None:
-            self.app.show_info("[#f7768e]Please enter your API key first.[/]")
-            return
-        if len(panel.context.messages) < 4:
-            self.app.show_info("Not enough messages to compact")
-            return
-
-        from .ui import Thinking
-
-        chat = panel.get_chat_container()
-        thinking = Thinking(id="compact-thinking")
-        chat.mount(thinking)
-        self.app.show_info("Compacting context...")
-
-        try:
-            result = await panel.context.compact(self.app.client)
-            thinking.remove()
-            self.app.show_info(f"[#9ece6a]{result}[/]")
-            self.app.update_status()
-            if panel.session_id:
-                save_session(panel.session_id, panel.context.messages)
-        except Exception as e:
-            thinking.remove()
-            self.app.show_info(f"[#f7768e]Compact failed: {e}[/]")
-
-    async def check_auto_compact(self, panel: ChatPanel) -> None:
-        """Auto-compact if context is running low.
-
-        Args:
-            panel: Panel to check and potentially compact.
-
-        """
-        if self.app.client is None:
-            return
-        if panel.context.needs_compacting:
-            remaining = int((1.0 - panel.context.usage_percent) * 100)
-            panel.show_info(f"[#e0af68]Context low ({remaining}% remaining) - auto-compacting...[/]")
-            try:
-                result = await panel.context.compact(self.app.client)
-                panel.show_info(f"[#9ece6a]{result}[/]")
-                self.app.update_status()
-            except Exception as e:
-                panel.show_info(f"[#f7768e]Auto-compact failed: {e}[/]")

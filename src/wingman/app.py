@@ -27,7 +27,7 @@ from .config import (
     fetch_marketplace_servers,
     load_api_key,
 )
-from .context import AUTO_COMPACT_THRESHOLD
+from .context import AUTO_COMPACT_THRESHOLD, CompactionController
 from .events import EventHandler
 from .memory import load_memory
 from .sessions import load_sessions
@@ -86,6 +86,7 @@ class WingmanApp(App):
         set_app_instance(self)
         self.cmds = Commands(self)
         self.streaming = StreamingController(self)
+        self.compaction = CompactionController(self)
         self.events = EventHandler(self)
         self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None

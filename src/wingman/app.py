@@ -34,7 +34,7 @@ from .panels import PanelMixin
 from .sessions import load_sessions
 from .skills import SkillManager
 from .streaming import StreamingController
-from .tool_bridge import ToolBridgeMixin
+from .tools_ui import ToolsUIMixin
 from .tools import (
     check_completed_processes,
     get_background_processes,
@@ -54,7 +54,7 @@ from .ui import (
 )
 
 
-class WingmanApp(PanelMixin, ToolBridgeMixin, App):
+class WingmanApp(PanelMixin, ToolsUIMixin, App):
     """Wingman - Your copilot for the terminal"""
 
     TITLE = "Wingman"

@@ -1,18 +1,15 @@
-"""Tool-to-UI bridge mixin for wingman.
+"""UI callbacks for the tool execution layer.
 
-Thread-safe methods that the tool execution layer (tools.py) calls
-to mount widgets, update command status, and show diff modals.
+Methods that tools.py calls to show command status widgets,
+update the thinking spinner, and display diff modals.
 
 """
 
 from __future__ import annotations
 
 
-class ToolBridgeMixin:
-    """Bridge between tool execution and TUI widgets.
-
-    These methods are called from tools.py via the app instance
-    reference. They handle thread-safe widget mounting and updates.
+class ToolsUIMixin:
+    """UI methods called by tools.py via the app instance reference.
 
     """
 

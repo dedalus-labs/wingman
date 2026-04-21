@@ -3,4 +3,6 @@
 # Prefix with platform: (e.g. github:user). Default platform is github.
 # Prefix with - to denounce. Append a reason after a space.
 github:aryanma
+github:gulkily
+github:kitan23
 github:windsornguyen

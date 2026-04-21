@@ -33,7 +33,15 @@ from .context import AUTO_COMPACT_THRESHOLD
 from .export import export_session_json, export_session_markdown, import_session_from_file
 from .images import CachedImage, cache_image_immediately, create_image_message_from_cache, is_image_path
 from .memory import add_entry, clear_all, load_memory
-from .sessions import delete_session, load_sessions, rename_session, save_session, save_session_working_dir
+from .sessions import (
+    delete_session,
+    fork_session_copy,
+    list_forks,
+    load_sessions,
+    rename_session,
+    save_session,
+    save_session_working_dir,
+)
 from .tools import (
     CODING_SYSTEM_PROMPT,
     add_text_segment,
@@ -907,13 +915,13 @@ class WingmanApp(App):
         new_panel.set_active(True)
         self._update_status()
 
-    def action_split_panel(self) -> None:
-        """Create a new panel (/split)."""
+    def _create_panel(self, *, initial_session_id: str | None = None) -> ChatPanel | None:
+        """Create and mount a new panel, returning it. Returns None if at panel cap."""
         if len(self.panels) >= 4:
             self._show_info("Maximum 4 panels allowed")
-            return
+            return None
         container = self.query_one("#panels-container", Horizontal)
-        panel = ChatPanel()
+        panel = ChatPanel(initial_session_id=initial_session_id)
         self.panels.append(panel)
         container.mount(panel)
         # Refresh welcome art on existing panels after layout recalculates
@@ -921,6 +929,11 @@ class WingmanApp(App):
         # Activate the new panel
         self._set_active_panel(len(self.panels) - 1)
         self._update_status()
+        return panel
+
+    def action_split_panel(self) -> None:
+        """Create a new panel (/split)."""
+        self._create_panel()
 
     def _refresh_welcome_art(self) -> None:
         """Re-render welcome art on panels that have it (after resize)."""
@@ -1362,6 +1375,78 @@ Useful for: API patterns, file locations, conventions.
         else:
             self._show_info(f"[#f7768e]Could not import from:[/] {arg}")
 
+    def _cmd_fork(self, arg: str) -> None:
+        """Fork the active session, optionally rewinding N user turns first.
+
+        /fork         clones all current messages into a new session.
+        /fork <n>     rewinds N user turns, then clones.
+        """
+        panel = self.active_panel
+        if not panel or not panel.messages:
+            self._show_info("No messages to fork")
+            return
+
+        n = 0
+        if arg.strip():
+            try:
+                n = int(arg.strip())
+            except ValueError:
+                self._show_info("Usage: /fork [n]  (n = user turns to rewind)")
+                return
+            if n < 0:
+                self._show_info("n must be non-negative")
+                return
+
+        cut_at = len(panel.messages)
+        if n > 0:
+            user_indexes = [i for i, m in enumerate(panel.messages) if m.get("role") == "user"]
+            if len(user_indexes) < n:
+                self._show_info(f"Cannot rewind {n}: only {len(user_indexes)} user turns in history")
+                return
+            cut_at = user_indexes[-n]
+
+        parent_id = panel.session_id
+        new_id = f"{parent_id or 'chat'}-fork-{time.time_ns()}"
+        ok = fork_session_copy(
+            new_id=new_id,
+            messages=panel.messages[:cut_at],
+            parent_session_id=parent_id,
+            forked_at_index=cut_at,
+            working_dir=str(panel.working_dir),
+        )
+        if not ok:
+            self._show_info(f"[#f7768e]Fork id collision:[/] {new_id}")
+            return
+
+        if len(self.panels) >= 4:
+            self._refresh_sessions()
+            self._show_info(f"[#9ece6a]Forked to[/] {new_id} [dim](panel limit reached; open with Ctrl+S)[/]")
+            return
+
+        # Toast the success BEFORE creating the panel: _show_info would target the
+        # new panel whose chat container isn't composed yet.
+        self.notify(f"Forked at message {cut_at}: {new_id}", timeout=3.0)
+        panel = self._create_panel(initial_session_id=new_id)
+        if panel is None:
+            return
+        self._refresh_sessions()
+
+    def _cmd_forks(self, arg: str) -> None:
+        """List forks of the active session."""
+        del arg
+        panel = self.active_panel
+        if not panel or not panel.session_id:
+            self._show_info("Active session has no id yet (send a message first)")
+            return
+        forks = list_forks(panel.session_id)
+        if not forks:
+            self._show_info("No forks of this session")
+            return
+        lines = [f"[bold #7aa2f7]Forks of {panel.session_id}[/]"]
+        lines.extend(f"  {sid}" for sid in forks)
+        lines.append("[dim]Open one with Ctrl+S.[/]")
+        self._show_info("\n".join(lines))
+
     def _handle_command(self, cmd: str) -> None:
         parts = cmd[1:].split(maxsplit=1)
         command = parts[0].lower()
@@ -1409,6 +1494,8 @@ Useful for: API patterns, file locations, conventions.
             "memory": self._cmd_memory,
             "export": self._cmd_export,
             "import": self._cmd_import,
+            "fork": self._cmd_fork,
+            "forks": self._cmd_forks,
         }
 
         if command in simple_commands:
@@ -1581,6 +1668,11 @@ Useful for: API patterns, file locations, conventions.
   [#7aa2f7]/export[/]         Export session to markdown
   [#7aa2f7]/export json[/]    Export as JSON
   [#7aa2f7]/import <path>[/]  Import from file
+
+[bold #a9b1d6]Forking[/]
+  [#7aa2f7]/fork[/]           Fork current session into a new panel
+  [#7aa2f7]/fork <n>[/]       Rewind n user turns, then fork
+  [#7aa2f7]/forks[/]          List forks of this session
 
 [bold #a9b1d6]Config[/]
   [#7aa2f7]/model[/]          Switch model

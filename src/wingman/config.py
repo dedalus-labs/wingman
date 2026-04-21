@@ -108,6 +108,8 @@ COMMANDS = [
     ("/memory", "Project memory"),
     ("/export", "Export session"),
     ("/import", "Import file"),
+    ("/fork", "Fork session (optionally rewind N turns)"),
+    ("/forks", "List forks of this session"),
     ("/key", "API key"),
     ("/clear", "Clear chat"),
     ("/help", "Show help"),

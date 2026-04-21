@@ -548,7 +548,7 @@ class ChatPanel(Vertical):
         Binding("escape", "focus_input", "Focus Input", show=False),
     ]
 
-    def __init__(self, panel_id: str | None = None, **kwargs):
+    def __init__(self, panel_id: str | None = None, *, initial_session_id: str | None = None, **kwargs):
         global _panel_counter
         if panel_id is None:
             _panel_counter += 1
@@ -563,6 +563,9 @@ class ChatPanel(Vertical):
         self._generating = False
         self._cancel_requested = False
         self.working_dir: Path = Path.cwd()
+        # If set, on_mount will load this session instead of showing the welcome splash.
+        # The welcome-vs-load decision happens here so there's no render race.
+        self._initial_session_id = initial_session_id
 
     @property
     def messages(self) -> list[dict]:
@@ -585,7 +588,12 @@ class ChatPanel(Vertical):
             yield Static("", id=f"{self.panel_id}-hint", classes="panel-hint")
 
     def on_mount(self) -> None:
-        self.call_after_refresh(self._show_welcome)
+        if self._initial_session_id is not None:
+            sid = self._initial_session_id
+            self._initial_session_id = None
+            self.call_after_refresh(lambda: self.load_session(sid))
+        else:
+            self.call_after_refresh(self._show_welcome)
 
     def _show_welcome(self, force_compact: bool = False) -> None:
         chat = self.query_one(f"#{self.panel_id}-chat", Vertical)

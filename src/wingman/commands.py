@@ -44,36 +44,34 @@ class Commands:
         arg = parts[1] if len(parts) > 1 else ""
 
         handlers = {
-            "new":       lambda: self.app.action_new_session(),
-            "split":     lambda: self.app.action_split_panel(),
-            "close":     lambda: self.app.action_close_panel(),
-            "model":     lambda: self.app.action_select_model(),
-            "compact":   lambda: self.app.compaction.compact(),
-            "context":   lambda: self.app.show_context_info(),
-            "key":       lambda: self.app.push_screen(
-                self._api_key_screen(), self.app.on_api_key_entered
-            ),
-            "clear":     lambda: self.app.action_clear_chat(),
-            "help":      lambda: self.app.action_help(),
-            "quit":      lambda: self.app.exit(),
-            "exit":      lambda: self.app.exit(),
-            "ls":        lambda: self.ls(arg),
-            "ps":        lambda: self.ps(),
+            "new": lambda: self.app.action_new_session(),
+            "split": lambda: self.app.action_split_panel(),
+            "close": lambda: self.app.action_close_panel(),
+            "model": lambda: self.app.action_select_model(),
+            "compact": lambda: self.app.compaction.compact(),
+            "context": lambda: self.app.show_context_info(),
+            "key": lambda: self.app.push_screen(self._api_key_screen(), self.app.on_api_key_entered),
+            "clear": lambda: self.app.action_clear_chat(),
+            "help": lambda: self.app.action_help(),
+            "quit": lambda: self.app.exit(),
+            "exit": lambda: self.app.exit(),
+            "ls": lambda: self.ls(arg),
+            "ps": lambda: self.ps(),
             "processes": lambda: self.ps(),
-            "kill":      lambda: self.kill(arg),
-            "bug":       lambda: self.bug(),
-            "feature":   lambda: self.feature(),
-            "rename":    lambda: self.rename(arg),
-            "delete":    lambda: self.delete(arg),
-            "mcp":       lambda: self.mcp(arg),
-            "code":      lambda: self.code(arg),
-            "cd":        lambda: self.cd(arg),
-            "history":   lambda: self.history(arg),
-            "rollback":  lambda: self.rollback(arg),
-            "diff":      lambda: self.diff(arg),
-            "memory":    lambda: self.memory(arg),
-            "export":    lambda: self.export(arg),
-            "import":    lambda: self.import_file(arg),
+            "kill": lambda: self.kill(arg),
+            "bug": lambda: self.bug(),
+            "feature": lambda: self.feature(),
+            "rename": lambda: self.rename(arg),
+            "delete": lambda: self.delete(arg),
+            "mcp": lambda: self.mcp(arg),
+            "code": lambda: self.code(arg),
+            "cd": lambda: self.cd(arg),
+            "history": lambda: self.history(arg),
+            "rollback": lambda: self.rollback(arg),
+            "diff": lambda: self.diff(arg),
+            "memory": lambda: self.memory(arg),
+            "export": lambda: self.export(arg),
+            "import": lambda: self.import_file(arg),
         }
 
         handler = handlers.get(command)
@@ -88,9 +86,7 @@ class Commands:
         """List background processes."""
         panel = self.app.active_panel
         pid = panel.panel_id if panel else None
-        self.app.show_info(
-            f"[bold #7aa2f7]Background Processes[/]\n{list_processes(pid)}"
-        )
+        self.app.show_info(f"[bold #7aa2f7]Background Processes[/]\n{list_processes(pid)}")
 
     def kill(self, arg: str) -> None:
         """Stop a background process by ID."""
@@ -147,11 +143,7 @@ class Commands:
             try:
                 tree = self.app.query_one("#sessions", Tree)
                 if tree.cursor_node and tree.cursor_node != tree.root:
-                    session_id = (
-                        str(tree.cursor_node.data)
-                        if tree.cursor_node.data
-                        else str(tree.cursor_node.label)
-                    )
+                    session_id = str(tree.cursor_node.data) if tree.cursor_node.data else str(tree.cursor_node.label)
             except Exception:
                 pass
         if not session_id:
@@ -253,8 +245,7 @@ class Commands:
         checkpoints = cp_manager.list_recent(15, session_id=session_id)
         if not checkpoints:
             self.app.show_info(
-                "No checkpoints for this session. "
-                "Checkpoints are created automatically before file edits."
+                "No checkpoints for this session. Checkpoints are created automatically before file edits."
             )
         else:
             lines = ["[bold #7aa2f7]Checkpoints[/] (use /rollback <id> to restore)\n"]
@@ -268,10 +259,7 @@ class Commands:
     def rollback(self, arg: str) -> None:
         """Restore a checkpoint."""
         if not arg:
-            self.app.show_info(
-                "Usage: /rollback <checkpoint_id>\n"
-                "Use /history to see available checkpoints."
-            )
+            self.app.show_info("Usage: /rollback <checkpoint_id>\nUse /history to see available checkpoints.")
             return
         panel = self.app.active_panel
         cp_manager = get_checkpoint_manager()
@@ -283,8 +271,7 @@ class Commands:
         restored = cp_manager.restore(arg)
         if restored:
             self.app.show_info(
-                f"[#9ece6a]Restored {len(restored)} file(s):[/]\n"
-                + "\n".join(f"  • {f}" for f in restored)
+                f"[#9ece6a]Restored {len(restored)} file(s):[/]\n" + "\n".join(f"  • {f}" for f in restored)
             )
         else:
             self.app.show_info(f"[#f7768e]Checkpoint not found: {arg}[/]")
@@ -299,9 +286,7 @@ class Commands:
             if recent:
                 arg = recent[0].id
             else:
-                self.app.show_info(
-                    "No checkpoints available for this session. Use /diff <checkpoint_id>"
-                )
+                self.app.show_info("No checkpoints available for this session. Use /diff <checkpoint_id>")
                 return
         diffs = cp_manager.diff(arg)
         if not diffs:
@@ -441,9 +426,7 @@ Useful for: API patterns, file locations, conventions.
                 if msg["role"] in ("user", "assistant") and msg.get("content"):
                     content = msg["content"]
                     if isinstance(content, list):
-                        content = " ".join(
-                            p.get("text", "") for p in content if isinstance(p, dict)
-                        )
+                        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
                     panel.messages.append({"role": msg["role"], "content": content})
                     count += 1
             self.app.update_status()

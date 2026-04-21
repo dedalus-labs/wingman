@@ -1,6 +1,4 @@
-"""Context management, token tracking, and compaction.
-
-"""
+"""Context management, token tracking, and compaction."""
 
 from __future__ import annotations
 
@@ -251,9 +249,7 @@ class CompactionController:
         self.app = app
 
     async def compact(self) -> None:
-        """Manually trigger context compaction.
-
-        """
+        """Manually trigger context compaction."""
         panel = self.app.active_panel
         if not panel:
             return

@@ -32,14 +32,14 @@ class Skill:
 
     """
 
-    name:                  str
-    description:           str
-    content:               str
-    path:                  Path
-    allowed_tools:         list[str]       = field(default_factory=list)
-    argument_hint:         str | None      = None
-    user_invocable:        bool            = True
-    disable_model_invoke:  bool            = False
+    name:                 str
+    description:          str
+    content:              str
+    path:                 Path
+    allowed_tools:        list[str]   = field(default_factory=list)
+    argument_hint:        str | None  = None
+    user_invocable:       bool        = True
+    disable_model_invoke: bool        = False
 # fmt: on
 
 

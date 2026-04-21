@@ -239,6 +239,7 @@ ChatPanel.active-panel {
 }
 
 .panel-quit-hint {
+    width: auto;
     color: #4c516a;
     text-align: right;
     padding: 0 2;

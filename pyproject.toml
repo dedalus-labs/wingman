@@ -70,7 +70,7 @@ Documentation = "https://github.com/dedalus-labs/wingman#readme"
 # --- Project Scripts (CLI Entry Point) ---
 
 [project.scripts]
-wingman = "wingman.app:main"
+wingman = "wingman.cli:main"
 
 # --- Optional Dependencies ---
 

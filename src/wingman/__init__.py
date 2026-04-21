@@ -7,7 +7,8 @@ Run: python -m wingman
 Headless: python -m wingman -p "your prompt"
 """
 
-from .app import WingmanApp, main
+from .app import WingmanApp
+from .cli import main
 from .config import APP_NAME, APP_VERSION
 from .headless import run_headless
 

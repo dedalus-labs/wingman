@@ -30,8 +30,10 @@ from .config import (
 from .context import AUTO_COMPACT_THRESHOLD, CompactionController
 from .events import EventHandler
 from .memory import load_memory
+from .panels import PanelMixin
 from .sessions import load_sessions
 from .streaming import StreamingController
+from .tool_bridge import ToolBridgeMixin
 from .tools import (
     check_completed_processes,
     get_background_processes,
@@ -42,8 +44,6 @@ from .tools import (
 from .ui import (
     APIKeyScreen,
     ChatPanel,
-    CommandStatus,
-    DiffModal,
     ImageChip,
     InputModal,
     MultilineInput,
@@ -53,7 +53,7 @@ from .ui import (
 )
 
 
-class WingmanApp(App):
+class WingmanApp(PanelMixin, ToolBridgeMixin, App):
     """Wingman - Your copilot for the terminal"""
 
     TITLE = "Wingman"
@@ -405,175 +405,8 @@ class WingmanApp(App):
         sidebar = self.query_one("#sidebar")
         sidebar.display = not sidebar.display
 
-    def set_active_panel(self, idx: int) -> None:
-        """Set the active panel by index."""
-        if idx < 0 or idx >= len(self.panels):
-            return
-        # Deactivate current
-        if self.active_panel:
-            self.active_panel.set_active(False)
-        # Activate new
-        self.active_panel_idx = idx
-        new_panel = self.panels[idx]
-        new_panel.set_active(True)
-        self.update_status()
-
-    def action_split_panel(self) -> None:
-        """Create a new panel (/split)."""
-        if len(self.panels) >= 4:
-            self.show_info("Maximum 4 panels allowed")
-            return
-        container = self.query_one("#panels-container", Horizontal)
-        panel = ChatPanel()
-        self.panels.append(panel)
-        container.mount(panel)
-        # Refresh welcome art on existing panels after layout recalculates
-        self.call_after_refresh(self._refresh_welcome_art)
-        # Activate the new panel
-        self.set_active_panel(len(self.panels) - 1)
-        self.update_status()
-
-    def _refresh_welcome_art(self) -> None:
-        """Re-render welcome art on panels that have it (after resize)."""
-
-        def do_refresh():
-            force_compact = len(self.panels) > 1
-            for p in self.panels:
-                try:
-                    p.query_one(".panel-welcome")
-                    p._show_welcome(force_compact=force_compact)
-                except Exception:
-                    pass
-
-        # Extra frame delay to ensure layout is fully recalculated
-        self.call_after_refresh(do_refresh)
-
-    def on_resize(self, event) -> None:
-        """Handle terminal resize - refresh welcome art."""
-        self.call_after_refresh(self._refresh_welcome_art)
-
-    def on_chat_panel_clicked(self, event: ChatPanel.Clicked) -> None:
-        """Switch focus to clicked panel."""
-        try:
-            idx = self.panels.index(event.panel)
-            if idx != self.active_panel_idx:
-                self.panels[self.active_panel_idx].set_active(False)
-                self.active_panel_idx = idx
-                event.panel.set_active(True)
-                self.update_status()
-        except ValueError:
-            pass
-
-    def action_close_panel(self) -> None:
-        """Close the active panel (/close)."""
-        if len(self.panels) <= 1:
-            self.show_info("Cannot close the last panel. Use Ctrl+C to quit.")
-            return
-        panel = self.active_panel
-        if not panel:
-            return
-        idx = self.active_panel_idx
-        # Update index BEFORE removing to avoid out of bounds
-        new_idx = idx - 1 if idx > 0 else 0
-        self.active_panel_idx = new_idx
-        # Now remove the panel
-        panel.remove()
-        self.panels.remove(panel)
-        # Refresh welcome art on remaining panels (may have more space now)
-        self.call_after_refresh(self._refresh_welcome_art)
-        # Activate the new panel
-        self.panels[new_idx].set_active(True)
-        self.update_status()
-
-    def action_prev_panel(self) -> None:
-        """Switch to previous panel."""
-        if len(self.panels) <= 1:
-            return
-        new_idx = (self.active_panel_idx - 1) % len(self.panels)
-        self.set_active_panel(new_idx)
-
-    def action_next_panel(self) -> None:
-        """Switch to next panel."""
-        if len(self.panels) <= 1:
-            return
-        new_idx = (self.active_panel_idx + 1) % len(self.panels)
-        self.set_active_panel(new_idx)
-
-    def action_goto_panel_1(self) -> None:
-        if len(self.panels) >= 1:
-            self.set_active_panel(0)
-
-    def action_goto_panel_2(self) -> None:
-        if len(self.panels) >= 2:
-            self.set_active_panel(1)
-
-    def action_goto_panel_3(self) -> None:
-        if len(self.panels) >= 3:
-            self.set_active_panel(2)
-
-    def action_goto_panel_4(self) -> None:
-        if len(self.panels) >= 4:
-            self.set_active_panel(3)
-
-    def _mount_command_status(self, command: str, widget_id: str, panel_id: str | None = None) -> None:
-        """Mount command status widget in the specified panel, before Thinking spinner."""
-        # Find panel by ID, fall back to active panel
-        panel = None
-        if panel_id:
-            for p in self.panels:
-                if p.panel_id == panel_id:
-                    panel = p
-                    break
-        if not panel:
-            panel = self.active_panel
-        if not panel:
-            return
-
-        chat = panel.get_chat_container()
-        widget = CommandStatus(command, id=widget_id)
-        # Mount before thinking spinner (search within this panel's chat only)
-        try:
-            thinking = chat.query_one(Thinking)
-            chat.mount(widget, before=thinking)
-        except Exception:
-            chat.mount(widget)
-        panel.get_scroll_container().scroll_end(animate=False)
-
-    def _update_command_status(
-        self, widget_id: str, status: str, output: str | None = None, panel_id: str | None = None
-    ) -> None:
-        """Update command status widget with final status and optional output."""
-        try:
-            widget = self.query_one(f"#{widget_id}", CommandStatus)
-            widget.set_status(status, output)
-        except Exception:
-            pass
-
-    def _update_thinking_status(self, status: str | None, panel_id: str | None = None) -> None:
-        """Update the Thinking spinner with current tool status."""
-        panel = None
-        if panel_id:
-            for p in self.panels:
-                if p.panel_id == panel_id:
-                    panel = p
-                    break
-        if not panel:
-            panel = self.active_panel
-        if not panel:
-            return
-        try:
-            thinking = panel.get_chat_container().query_one(Thinking)
-            thinking.set_status(status)
-        except Exception:
-            pass
-
-    @work
-    async def _show_diff_modal(self, path: str, old_string: str, new_string: str) -> None:
-        """Display diff modal and handle approval."""
-        from .tools import set_edit_result
-
-        result = await self.push_screen_wait(DiffModal(path, old_string, new_string))
-        set_edit_result(result)
+    # Panel management methods provided by PanelMixin
+    # Tool bridge methods provided by ToolBridgeMixin
 
     def handle_command(self, cmd: str) -> None:
         """Delegate slash commands to self.cmds."""
@@ -764,63 +597,3 @@ class WingmanApp(App):
 [dim]Working dir: {panel.working_dir if panel else Path.cwd()}[/]
 [dim]Panels: {panel_count} · Background: {bg_count} · Checkpoints: {cp_count} · Images: {img_count}[/]"""
         self.show_info(help_text)
-
-
-def main():
-    import argparse
-    import sys
-
-    # Load environment variables from .env file
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
-
-    parser = argparse.ArgumentParser(prog="wingman", description="Wingman - AI coding assistant for the terminal")
-    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {APP_VERSION}")
-    parser.add_argument(
-        "-p",
-        "--print",
-        dest="prompt",
-        metavar="PROMPT",
-        help="Run in headless mode with the given prompt (non-interactive)",
-    )
-    parser.add_argument("-m", "--model", help="Model to use (e.g., anthropic/claude-sonnet-4-20250514)")
-    parser.add_argument("--verbose", action="store_true", help="Print verbose output in headless mode")
-    parser.add_argument(
-        "--allowed-tools", help="Comma-separated list of allowed tools (e.g., read_file,write_file,run_command)"
-    )
-    parser.add_argument("-C", "--working-dir", help="Working directory for file operations")
-
-    args = parser.parse_args()
-
-    # Headless mode
-    if args.prompt:
-        import asyncio
-        from pathlib import Path
-
-        from .headless import run_headless
-
-        working_dir = Path(args.working_dir) if args.working_dir else None
-        allowed_tools = args.allowed_tools.split(",") if args.allowed_tools else None
-
-        exit_code = asyncio.run(
-            run_headless(
-                prompt=args.prompt,
-                model=args.model,
-                working_dir=working_dir,
-                allowed_tools=allowed_tools,
-                verbose=args.verbose,
-            )
-        )
-        sys.exit(exit_code)
-
-    # Interactive TUI mode
-    app = WingmanApp()
-    app.run()
-
-
-if __name__ == "__main__":
-    main()

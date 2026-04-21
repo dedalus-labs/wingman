@@ -12,7 +12,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from ..config import save_api_key
+from ..config import load_base_url, save_api_key
 
 
 class APIKeyScreen(ModalScreen[str | None]):
@@ -54,7 +54,11 @@ class APIKeyScreen(ModalScreen[str | None]):
         status.set_classes("validating")
 
         try:
-            client = AsyncDedalus(api_key=key)
+            base_url = load_base_url()
+            kwargs: dict = {"api_key": key}
+            if base_url:
+                kwargs["base_url"] = base_url
+            client = AsyncDedalus(**kwargs)
             await client.models.list()
             save_api_key(key)
             self.dismiss(key)

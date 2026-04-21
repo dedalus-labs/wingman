@@ -134,6 +134,33 @@ def load_api_key() -> str | None:
     return None
 
 
+def load_base_url() -> str | None:
+    """Load API base URL from environment or config.
+
+    Checks ``WINGMAN_BASE_URL`` env var first, then ``base_url`` in
+    ``~/.wingman/config.json``. Returns None to use the SDK default.
+
+    Returns:
+        Base URL string or None.
+
+    """
+    import os
+
+    env_url = os.environ.get("WINGMAN_BASE_URL")
+    if env_url:
+        return env_url.rstrip("/")
+
+    if CONFIG_FILE.exists():
+        try:
+            config = oj.loads(CONFIG_FILE.read_text())
+            url = config.get("base_url")
+            if url:
+                return url.rstrip("/")
+        except Exception:
+            pass
+    return None
+
+
 def save_api_key(api_key: str) -> None:
     """Save API key to config file."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

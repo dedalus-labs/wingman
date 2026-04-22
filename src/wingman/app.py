@@ -26,6 +26,7 @@ from .config import (
     MODELS,
     fetch_marketplace_servers,
     load_api_key,
+    load_base_url,
     load_instructions,
 )
 from .context import AUTO_COMPACT_THRESHOLD
@@ -105,7 +106,11 @@ class WingmanApp(App):
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key."""
-        self.client = AsyncDedalus(api_key=api_key)
+        base_url = load_base_url()
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = AsyncDedalus(**kwargs)
         self.runner = DedalusRunner(self.client)
 
     @property
@@ -212,7 +217,9 @@ class WingmanApp(App):
             cwd_display = str(cwd)
         cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
-        status = f"{session_text} │ {model_short}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
+        base_url = load_base_url()
+        base_text = f" │ [#e0af68]{base_url.split('//')[1][:30]}[/]" if base_url else ""
+        status = f"{session_text} │ {model_short}{base_text}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 
     def _refresh_sessions(self) -> None:

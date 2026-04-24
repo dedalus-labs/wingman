@@ -24,6 +24,7 @@ from .config import (
     APP_VERSION,
     MARKETPLACE_SERVERS,
     MODELS,
+    base_url_in_config,
     fetch_marketplace_servers,
     load_api_key,
     load_base_url,
@@ -45,6 +46,7 @@ from .tools import (
 )
 from .ui import (
     APIKeyScreen,
+    BaseUrlScreen,
     ChatPanel,
     ImageChip,
     InputModal,
@@ -164,10 +166,11 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         # Set first panel as active
         if self.panels:
             self.panels[0].set_active(True)
-        # Check for API key
+        # Check for API key, then base URL.
         api_key = load_api_key()
         if api_key:
             self._init_client(api_key)
+            self._maybe_prompt_base_url()
         else:
             self.push_screen(APIKeyScreen(), self.on_api_key_entered)
         # Fetch marketplace servers in background
@@ -213,8 +216,26 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         """Callback when API key is entered."""
         if api_key:
             self._init_client(api_key)
+            self._maybe_prompt_base_url()
             if self.active_panel:
                 self.active_panel.get_input().focus()
+
+    def _maybe_prompt_base_url(self) -> None:
+        """On first launch, prompt for base_url if it isn't set anywhere yet.
+
+        BASE_URL env var or an existing config entry both count as set.
+        """
+        if base_url_in_config() or load_base_url():
+            return
+        self.push_screen(BaseUrlScreen(), self._on_base_url_entered)
+
+    def _on_base_url_entered(self, url: str | None) -> None:
+        """Callback after BaseUrlScreen. Re-init client if user picked a URL."""
+        if url and self.client is not None:
+            # Re-init so the new endpoint takes effect, then refetch models.
+            api_key = load_api_key()
+            if api_key:
+                self._init_client(api_key)
 
     def update_status(self) -> None:
         model_short = self.model.split("/")[-1]
@@ -645,8 +666,10 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
   [#7aa2f7]/forks[/]          List forks of this session
 
 [bold #a9b1d6]Config[/]
-  [#7aa2f7]/model[/]          Switch model
-  [#7aa2f7]/context[/]        Show context usage
+  [#7aa2f7]/model[/]            Switch model
+  [#7aa2f7]/context[/]          Show context usage
+  [#7aa2f7]/key[/]              Set API key
+  [#7aa2f7]/base_url[/] [dim]\\[url][/]  Show or change the API base URL
 
 [bold #a9b1d6]App[/]
   [#7aa2f7]/exit[/]           Quit Wingman

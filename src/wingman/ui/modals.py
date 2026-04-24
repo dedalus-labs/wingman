@@ -11,7 +11,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from ..config import load_base_url, save_api_key
+from ..config import load_base_url, save_api_key, save_base_url
 
 
 class APIKeyScreen(ModalScreen[str | None]):
@@ -70,6 +70,51 @@ class APIKeyScreen(ModalScreen[str | None]):
             status.set_classes("error")
             input_widget.disabled = False
             input_widget.focus()
+
+
+class BaseUrlScreen(ModalScreen[str | None]):
+    """Prompt for the API base URL on first launch (or via /base_url)."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+    ]
+
+    DEFAULT_URL = "https://api.dedaluslabs.ai"
+
+    def __init__(self, *, current: str | None = None, **kwargs):
+        super().__init__(**kwargs)
+        # Show the user's current value if set, else the prod default as a hint.
+        self._initial = current or ""
+
+    def compose(self):
+        with Vertical():
+            yield Static("Set API base URL", classes="header")
+            yield Static("Where should wingman send requests?", classes="instruction")
+            yield Static(
+                f"Press Enter for the default: {self.DEFAULT_URL}",
+                classes="prompt",
+            )
+            yield Input(
+                value=self._initial,
+                placeholder=self.DEFAULT_URL,
+                id="base-url-input",
+            )
+            yield Static("", id="base-url-status")
+            yield Static("Stored in ~/.wingman/config.json. Esc to skip.", classes="footer")
+
+    def on_mount(self) -> None:
+        self.query_one("#base-url-input", Input).focus()
+
+    @on(Input.Submitted, "#base-url-input")
+    def on_submit(self, event: Input.Submitted) -> None:
+        url = event.value.strip() or self.DEFAULT_URL
+        if "://" not in url:
+            url = f"https://{url}"
+        save_base_url(url)
+        self.dismiss(url)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SelectionModal(ModalScreen[str | None]):

@@ -55,6 +55,7 @@ COMMANDS = [
     ("/fork", "Fork session (optionally rewind N turns)"),
     ("/forks", "List forks of this session"),
     ("/key", "API key"),
+    ("/base_url", "API base URL"),
     ("/clear", "Clear chat"),
     ("/help", "Show help"),
     ("/exit", "Quit Wingman"),
@@ -119,6 +120,31 @@ def save_api_key(api_key: str) -> None:
             config = oj.loads(CONFIG_FILE.read_text())
     config["api_key"] = api_key
     CONFIG_FILE.write_text(oj.dumps(config, indent=2))
+
+
+def save_base_url(base_url: str | None) -> None:
+    """Save (or clear) the base_url in the config file."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config = {}
+    if CONFIG_FILE.exists():
+        with contextlib.suppress(Exception):
+            config = oj.loads(CONFIG_FILE.read_text())
+    if base_url:
+        config["base_url"] = base_url.rstrip("/")
+    else:
+        config.pop("base_url", None)
+    CONFIG_FILE.write_text(oj.dumps(config, indent=2))
+
+
+def base_url_in_config() -> bool:
+    """True iff base_url is explicitly set in ~/.wingman/config.json."""
+    if not CONFIG_FILE.exists():
+        return False
+    try:
+        config = oj.loads(CONFIG_FILE.read_text())
+        return bool(config.get("base_url"))
+    except Exception:
+        return False
 
 
 INSTRUCTION_FILENAMES = ["AGENTS.md", "WINGMAN.md"]

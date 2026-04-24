@@ -1,6 +1,6 @@
 """UI components for Wingman."""
 
-from .modals import APIKeyScreen, DiffModal, InputModal, SelectionModal
+from .modals import APIKeyScreen, BaseUrlScreen, DiffModal, InputModal, SelectionModal
 from .widgets import (
     BranchMarker,
     ChatMessage,
@@ -15,6 +15,7 @@ from .widgets import (
 
 __all__ = [
     "APIKeyScreen",
+    "BaseUrlScreen",
     "DiffModal",
     "InputModal",
     "SelectionModal",

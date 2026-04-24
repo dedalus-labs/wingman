@@ -65,6 +65,35 @@ def test_save_session_preserves_parent_linkage(isolated_sessions):
     assert get_session_parent("fork") == "parent"
 
 
+def test_rename_session_rewires_children(isolated_sessions):
+    """Renaming a parent session must update every fork's parent_session_id."""
+    from wingman.sessions import (
+        fork_session_copy,
+        get_fork_points,
+        get_session_parent,
+        list_forks,
+        rename_session,
+        save_session,
+    )
+
+    save_session("old-name", [{"role": "user", "content": "q"}])
+    fork_session_copy("child-a", [{"role": "user", "content": "q"}], "old-name", 1)
+    fork_session_copy("child-b", [], "old-name", 0)
+    # A fork of a different parent must not be touched.
+    save_session("unrelated-parent", [])
+    fork_session_copy("unrelated-child", [], "unrelated-parent", 0)
+
+    assert rename_session("old-name", "new-name") is True
+
+    assert sorted(list_forks("new-name")) == ["child-a", "child-b"]
+    assert list_forks("old-name") == []
+    assert get_session_parent("child-a") == "new-name"
+    assert get_session_parent("child-b") == "new-name"
+    assert {fid for fid, _ in get_fork_points("new-name")} == {"child-a", "child-b"}
+    # Unrelated lineage untouched.
+    assert get_session_parent("unrelated-child") == "unrelated-parent"
+
+
 def test_list_forks_filters_by_parent(isolated_sessions):
     from wingman.sessions import fork_session_copy, list_forks, save_session
 

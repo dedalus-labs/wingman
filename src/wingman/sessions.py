@@ -97,13 +97,18 @@ def delete_session(session_id: str) -> None:
 
 
 def rename_session(old_id: str, new_id: str) -> bool:
-    """Rename a session."""
+    """Rename a session and update any forks that point at it."""
     sessions = load_sessions()
-    if old_id in sessions:
-        sessions[new_id] = sessions.pop(old_id)
-        save_sessions(sessions)
-        return True
-    return False
+    if old_id not in sessions:
+        return False
+    sessions[new_id] = sessions.pop(old_id)
+    # Keep fork lineage intact: any child whose parent_session_id was the
+    # old id now points at the new id.
+    for data in sessions.values():
+        if isinstance(data, dict) and data.get("parent_session_id") == old_id:
+            data["parent_session_id"] = new_id
+    save_sessions(sessions)
+    return True
 
 
 def list_forks(parent_session_id: str) -> list[str]:

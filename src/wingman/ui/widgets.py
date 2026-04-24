@@ -583,7 +583,9 @@ class ChatPanel(Vertical):
         super().__init__(id=panel_id, **kwargs)
         self.panel_id = panel_id
         self.session_id: str | None = None
-        self.context = ContextManager(model=MODELS[0])
+        # Model is empty until /v1/models has been fetched; the app updates
+        # context.model after fetch completes.
+        self.context = ContextManager(model=MODELS[0] if MODELS else "")
         self.pending_images: list[CachedImage] = []
         self.mcp_servers: list[str] = []
         self._is_active = False

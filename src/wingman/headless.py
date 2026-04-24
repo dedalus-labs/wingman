@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 
-from .config import MODELS, load_api_key, load_base_url, load_instructions
+from .config import load_api_key, load_base_url, load_instructions
 from .tools import CODING_SYSTEM_PROMPT, create_tools_headless
 
 
@@ -38,9 +38,6 @@ async def run_headless(
     if working_dir is None:
         working_dir = Path.cwd()
 
-    if model is None:
-        model = MODELS[0]
-
     try:
         base_url = load_base_url()
         kwargs: dict = {"api_key": api_key}
@@ -48,6 +45,20 @@ async def run_headless(
             kwargs["base_url"] = base_url
         client = AsyncDedalus(**kwargs)
         runner = DedalusRunner(client)
+
+        # Resolve model: caller-supplied wins, otherwise pull the first id
+        # from {base_url}/v1/models. No hardcoded fallback.
+        if model is None:
+            try:
+                response = await client.models.list()
+                ids = [m.id for m in getattr(response, "data", []) if getattr(m, "id", None)]
+                if not ids:
+                    print("Error: endpoint returned no models. Pass --model.", file=sys.stderr)
+                    return 1
+                model = sorted(ids)[0]
+            except Exception as e:
+                print(f"Error: could not fetch models from endpoint: {e}", file=sys.stderr)
+                return 1
 
         # Build system prompt
         system_content = CODING_SYSTEM_PROMPT.format(cwd=working_dir)

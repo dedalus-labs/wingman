@@ -25,65 +25,9 @@ APP_CREDIT = "Dedalus Labs"
 DEDALUS_SITE_URL = "https://dedaluslabs.ai"
 
 
-# Models (verified in models.dev)
-DEFAULT_MODELS = [
-    # OpenAI Chat
-    "openai/gpt-5.2",
-    "openai/gpt-5.1",
-    "openai/gpt-5",
-    "openai/gpt-5-mini",
-    "openai/gpt-5-nano",
-    "openai/gpt-5-chat-latest",
-    "openai/gpt-4.1",
-    "openai/gpt-4.1-mini",
-    "openai/gpt-4.1-nano",
-    "openai/gpt-4o",
-    "openai/gpt-4o-2024-05-13",
-    "openai/gpt-4o-mini",
-    "openai/gpt-4-turbo",
-    "openai/gpt-4",
-    "openai/gpt-3.5-turbo",
-    # OpenAI Reasoning
-    "openai/o1",
-    "openai/o3",
-    "openai/o3-mini",
-    "openai/o4-mini",
-    # Anthropic
-    "anthropic/claude-opus-4-5",
-    "anthropic/claude-haiku-4-5-20251001",
-    "anthropic/claude-sonnet-4-5-20250929",
-    "anthropic/claude-opus-4-1-20250805",
-    "anthropic/claude-opus-4-20250514",
-    "anthropic/claude-sonnet-4-20250514",
-    "anthropic/claude-3-7-sonnet-20250219",
-    "anthropic/claude-3-5-haiku-20241022",
-    "anthropic/claude-3-haiku-20240307",
-    # Google
-    "google/gemini-3-pro-preview",
-    "google/gemini-3-flash-preview",
-    "google/gemini-2.5-pro",
-    "google/gemini-2.5-flash",
-    "google/gemini-2.5-flash-lite",
-    "google/gemini-2.0-flash",
-    "google/gemini-2.0-flash-lite",
-    # xAI
-    "xai/grok-4-1-fast-non-reasoning",
-    "xai/grok-4-fast-non-reasoning",
-    "xai/grok-code-fast-1",
-    "xai/grok-3",
-    "xai/grok-3-mini",
-    "xai/grok-2-vision-1212",
-    # DeepSeek
-    "deepseek/deepseek-chat",
-    "deepseek/deepseek-reasoner",
-    # Mistral
-    "mistral/mistral-large-latest",
-    "mistral/mistral-medium-latest",
-    "mistral/mistral-small-latest",
-    "mistral/pixtral-12b",
-]
-
-MODELS: list[str] = DEFAULT_MODELS.copy()
+# Models are populated at runtime by fetching from {base_url}/v1/models.
+# Empty until the client is initialized; /model picker errors out until then.
+MODELS: list[str] = []
 MARKETPLACE_SERVERS: list[dict] = []
 
 # Commands for autocomplete (command, description)

@@ -94,20 +94,50 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None
         self.runner: DedalusRunner | None = None
-        self.model = MODELS[0]
+        self.model: str = ""
         self.coding_mode: bool = True
         self.panels: list[ChatPanel] = []
         self.active_panel_idx: int = 0
         self.last_ctrl_c: float | None = None
 
     def _init_client(self, api_key: str) -> None:
-        """Initialize Dedalus client with API key."""
+        """Initialize Dedalus client with API key, then schedule a model fetch."""
         base_url = load_base_url()
         kwargs: dict = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
         self.client = AsyncDedalus(**kwargs)
         self.runner = DedalusRunner(self.client)
+        self._fetch_models()
+
+    @work(thread=False)
+    async def _fetch_models(self) -> None:
+        """Pull the model catalog from the connected endpoint.
+
+        Replaces MODELS in place. On error MODELS stays empty and the
+        user is notified — there is no fallback list, since stale ids
+        are worse than an empty picker.
+        """
+        if self.client is None:
+            return
+        try:
+            response = await self.client.models.list()
+            ids = [m.id for m in getattr(response, "data", []) if getattr(m, "id", None)]
+        except Exception as e:
+            self.notify(f"Failed to load models: {e}", severity="error", timeout=6.0)
+            return
+        if not ids:
+            self.notify("Endpoint returned no models", severity="error", timeout=6.0)
+            return
+        MODELS.clear()
+        MODELS.extend(sorted(ids))
+        if not self.model or self.model not in MODELS:
+            self.model = MODELS[0]
+        # Sync any open panels' context to the new default.
+        for panel in self.panels:
+            panel.context.model = self.model
+        self.update_status()
+        self.notify(f"Loaded {len(MODELS)} models", timeout=2.0)
 
     @property
     def active_panel(self) -> ChatPanel | None:
@@ -483,6 +513,9 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
 
     @work
     async def action_select_model(self) -> None:
+        if not MODELS:
+            self.notify("Models not loaded yet — check API key/base_url", severity="warning", timeout=4.0)
+            return
         result = await self.push_screen_wait(SelectionModal("Select Model", MODELS))
         if result:
             self.model = result

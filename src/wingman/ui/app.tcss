@@ -333,6 +333,53 @@ APIKeyScreen .validating {
     padding-top: 1;
 }
 
+/* --- Base URL Screen (mirrors APIKeyScreen layout) --- */
+BaseUrlScreen {
+    align: center middle;
+    background: #1a1b26;
+}
+
+BaseUrlScreen > Vertical {
+    width: 70;
+    height: auto;
+    padding: 2 4;
+}
+
+BaseUrlScreen .header {
+    text-align: center;
+    color: #7aa2f7;
+    text-style: bold;
+    padding-bottom: 2;
+}
+
+BaseUrlScreen .instruction {
+    text-align: center;
+    color: #a9b1d6;
+    padding-bottom: 1;
+}
+
+BaseUrlScreen .prompt {
+    text-align: center;
+    color: #a9b1d6;
+    padding-bottom: 1;
+}
+
+BaseUrlScreen Input {
+    margin: 1 0;
+    border: solid #3b3d4d;
+    background: #24283b;
+}
+
+BaseUrlScreen Input:focus {
+    border: solid #3d59a1;
+}
+
+BaseUrlScreen .footer {
+    text-align: center;
+    color: #565f89;
+    padding-top: 2;
+}
+
 /* --- Selection Modal --- */
 SelectionModal {
     align: center middle;

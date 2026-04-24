@@ -30,20 +30,43 @@ class PanelMixin:
         new_panel.set_active(True)
         self.update_status()
 
-    def action_split_panel(self) -> None:
-        """Create a new panel."""
+    def create_panel(
+        self,
+        *,
+        initial_session_id: str | None = None,
+        initial_input: str | None = None,
+    ):
+        """Create and mount a new panel, returning it. Returns None if at panel cap."""
         if len(self.panels) >= 4:
             self.show_info("Maximum 4 panels allowed")
-            return
+            return None
         from .ui import ChatPanel
 
         container = self.query_one("#panels-container", Horizontal)
-        panel = ChatPanel()
+        panel = ChatPanel(initial_session_id=initial_session_id, initial_input=initial_input)
         self.panels.append(panel)
         container.mount(panel)
         self.call_after_refresh(self._refresh_welcome_art)
         self.set_active_panel(len(self.panels) - 1)
         self.update_status()
+        return panel
+
+    def action_split_panel(self) -> None:
+        """Create a new panel."""
+        self.create_panel()
+
+    def on_branch_marker_open_fork(self, event) -> None:
+        """Open the forked session in a new panel, or focus it if already open."""
+        fork_id = event.fork_session_id
+        if not fork_id:
+            return
+        for idx, existing in enumerate(self.panels):
+            if existing.session_id == fork_id:
+                self.set_active_panel(idx)
+                return
+        panel = self.create_panel(initial_session_id=fork_id)
+        if panel is not None:
+            self.refresh_sessions()
 
     def _refresh_welcome_art(self) -> None:
         """Re-render welcome art on panels that have it."""

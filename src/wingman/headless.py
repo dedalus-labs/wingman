@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 
-from .config import MODELS, load_api_key, load_instructions
+from .config import MODELS, load_api_key, load_base_url, load_instructions
 from .tools import CODING_SYSTEM_PROMPT, create_tools_headless
 
 
@@ -42,7 +42,11 @@ async def run_headless(
         model = MODELS[0]
 
     try:
-        client = AsyncDedalus(api_key=api_key)
+        base_url = load_base_url()
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = AsyncDedalus(**kwargs)
         runner = DedalusRunner(client)
 
         # Build system prompt

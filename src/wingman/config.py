@@ -108,6 +108,8 @@ COMMANDS = [
     ("/memory", "Project memory"),
     ("/export", "Export session"),
     ("/import", "Import file"),
+    ("/fork", "Fork session (optionally rewind N turns)"),
+    ("/forks", "List forks of this session"),
     ("/key", "API key"),
     ("/clear", "Clear chat"),
     ("/help", "Show help"),
@@ -130,6 +132,33 @@ def load_api_key() -> str | None:
         try:
             config = oj.loads(CONFIG_FILE.read_text())
             return config.get("api_key")
+        except Exception:
+            pass
+    return None
+
+
+def load_base_url() -> str | None:
+    """Load API base URL from environment or config.
+
+    Checks ``BASE_URL`` env var first, then ``base_url`` in
+    ``~/.wingman/config.json``. Returns None to use the SDK default.
+
+    Returns:
+        Base URL string or None.
+
+    """
+    import os
+
+    env_url = os.environ.get("BASE_URL")
+    if env_url:
+        return env_url.rstrip("/")
+
+    if CONFIG_FILE.exists():
+        try:
+            config = oj.loads(CONFIG_FILE.read_text())
+            url = config.get("base_url")
+            if url:
+                return url.rstrip("/")
         except Exception:
             pass
     return None

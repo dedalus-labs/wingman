@@ -21,7 +21,7 @@ from ..command_completion import CompletionContext, apply_completion, get_comple
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
-from ..sessions import get_session, get_session_working_dir, save_session
+from ..sessions import get_fork_points, get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
 
 
@@ -541,6 +541,26 @@ class CommandStatus(Static):
 _panel_counter: int = 0
 
 
+class BranchMarker(Static):
+    """Inline scrollback marker showing a fork diverged here. Click opens it."""
+
+    class OpenFork(Message):
+        def __init__(self, fork_session_id: str) -> None:
+            super().__init__()
+            self.fork_session_id = fork_session_id
+
+    def __init__(self, fork_session_id: str, message_count: int, **kwargs):
+        short = fork_session_id.rsplit("-fork-", 1)[-1][:10] if "-fork-" in fork_session_id else fork_session_id[-10:]
+        plural = "s" if message_count != 1 else ""
+        text = f"[dim #565f89]|-- fork: {escape(short)} ({message_count} msg{plural}) . click to open[/]"
+        super().__init__(Text.from_markup(text), classes="branch-marker", **kwargs)
+        self.fork_session_id = fork_session_id
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(self.OpenFork(self.fork_session_id))
+
+
 class ChatPanel(Vertical):
     """Self-contained chat panel with session, context, and input."""
 
@@ -548,7 +568,14 @@ class ChatPanel(Vertical):
         Binding("escape", "focus_input", "Focus Input", show=False),
     ]
 
-    def __init__(self, panel_id: str | None = None, **kwargs):
+    def __init__(
+        self,
+        panel_id: str | None = None,
+        *,
+        initial_session_id: str | None = None,
+        initial_input: str | None = None,
+        **kwargs,
+    ):
         global _panel_counter
         if panel_id is None:
             _panel_counter += 1
@@ -563,6 +590,12 @@ class ChatPanel(Vertical):
         self._generating = False
         self._cancel_requested = False
         self.working_dir: Path = Path.cwd()
+        # If set, on_mount will load this session instead of showing the welcome splash.
+        # The welcome-vs-load decision happens here so there's no render race.
+        self._initial_session_id = initial_session_id
+        # Optional text to seed the Input with after load_session runs (used by
+        # fork-rewrite flow to pre-populate the user's message for editing).
+        self._initial_input = initial_input
 
     @property
     def messages(self) -> list[dict]:
@@ -585,7 +618,25 @@ class ChatPanel(Vertical):
             yield Static("", id=f"{self.panel_id}-hint", classes="panel-hint")
 
     def on_mount(self) -> None:
-        self.call_after_refresh(self._show_welcome)
+        if self._initial_session_id is not None:
+            sid = self._initial_session_id
+            prefill = self._initial_input
+            self._initial_session_id = None
+            self._initial_input = None
+            self.call_after_refresh(lambda: self._boot_with_session(sid, prefill))
+        else:
+            self.call_after_refresh(self._show_welcome)
+
+    def _boot_with_session(self, session_id: str, prefill: str | None) -> None:
+        """Load a session at mount time and optionally seed the input field."""
+        self.load_session(session_id)
+        if prefill:
+            try:
+                inp = self.get_input()
+                inp.value = prefill
+                inp.focus()
+            except Exception:
+                pass
 
     def _show_welcome(self, force_compact: bool = False) -> None:
         chat = self.query_one(f"#{self.panel_id}-chat", Vertical)
@@ -691,9 +742,21 @@ class ChatPanel(Vertical):
         self.working_dir = Path(saved_dir) if saved_dir else Path.cwd()
         chat = self.get_chat_container()
         chat.remove_children()
+
+        # Group this session's forks by divergence point, so we can inject a
+        # BranchMarker right before the message where each fork diverged.
+        forks_by_index: dict[int, list[tuple[str, int]]] = {}
+        for fork_id, cut_at in get_fork_points(session_id):
+            forks_by_index.setdefault(cut_at, []).append((fork_id, cut_at))
+
+        def _emit_markers(idx: int) -> None:
+            for fork_id, msg_count in forks_by_index.get(idx, []):
+                chat.mount(BranchMarker(fork_id, msg_count))
+
         base_id = int(time.time() * 1000)
         widget_id = 0
-        for msg in self.messages:
+        for i, msg in enumerate(self.messages):
+            _emit_markers(i)
             if msg["role"] not in ("user", "assistant"):
                 continue
 
@@ -745,6 +808,8 @@ class ChatPanel(Vertical):
                 chat.mount(ChatMessage(msg["role"], display_text, image_count=img_count))
             else:
                 chat.mount(ChatMessage(msg["role"], content))
+        # HEAD-fork markers (forked_at_index == len(messages)) land after everything.
+        _emit_markers(len(self.messages))
         self.get_scroll_container().scroll_end(animate=False)
 
     def action_focus_input(self) -> None:

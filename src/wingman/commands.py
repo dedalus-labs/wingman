@@ -157,7 +157,7 @@ class Commands:
             panel.session_id = None
             panel.clear_chat()
             panel.working_dir = Path.cwd()
-            panel.show_welcome()
+            panel._show_welcome()
         self.app.show_info(f"Deleted session: {session_id}")
         self.app.update_status()
 

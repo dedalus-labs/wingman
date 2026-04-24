@@ -9,9 +9,7 @@ from __future__ import annotations
 
 
 class ToolsUIMixin:
-    """UI methods called by tools.py via the app instance reference.
-
-    """
+    """UI methods called by tools.py via the app instance reference."""
 
     def resolve_panel(self, panel_id: str | None = None):
         """Find a panel by ID, falling back to the active panel.

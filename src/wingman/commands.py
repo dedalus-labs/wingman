@@ -72,6 +72,8 @@ class Commands:
             "memory": lambda: self.memory(arg),
             "export": lambda: self.export(arg),
             "import": lambda: self.import_file(arg),
+            "fork": lambda: self.app.forking.fork(arg),
+            "forks": lambda: self.app.forking.forks(arg),
             "skills": lambda: self.skills_list(),
         }
 

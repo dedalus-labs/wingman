@@ -26,15 +26,16 @@ from .config import (
     MODELS,
     fetch_marketplace_servers,
     load_api_key,
+    load_base_url,
 )
 from .context import AUTO_COMPACT_THRESHOLD, CompactionController
 from .events import EventHandler
+from .fork import ForkController
 from .memory import load_memory
 from .panels import PanelMixin
 from .sessions import load_sessions
 from .skills import SkillManager
 from .streaming import StreamingController
-from .tools_ui import ToolsUIMixin
 from .tools import (
     check_completed_processes,
     get_background_processes,
@@ -42,6 +43,7 @@ from .tools import (
     request_background,
     set_app_instance,
 )
+from .tools_ui import ToolsUIMixin
 from .ui import (
     APIKeyScreen,
     ChatPanel,
@@ -90,6 +92,7 @@ class WingmanApp(PanelMixin, ToolsUIMixin, App):
         self.compaction = CompactionController(self)
         self.skills = SkillManager(self)
         self.events = EventHandler(self)
+        self.forking = ForkController(self)
         self.scroll_sensitivity_y = 0.6
         self.client: AsyncDedalus | None = None
         self.runner: DedalusRunner | None = None
@@ -101,7 +104,11 @@ class WingmanApp(PanelMixin, ToolsUIMixin, App):
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key."""
-        self.client = AsyncDedalus(api_key=api_key)
+        base_url = load_base_url()
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = AsyncDedalus(**kwargs)
         self.runner = DedalusRunner(self.client)
 
     @property
@@ -209,7 +216,9 @@ class WingmanApp(PanelMixin, ToolsUIMixin, App):
             cwd_display = str(cwd)
         cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
-        status = f"{session_text} │ {model_short}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
+        base_url = load_base_url()
+        base_text = f" │ [#e0af68]{base_url.split('//')[1][:30]}[/]" if base_url else ""
+        status = f"{session_text} │ {model_short}{base_text}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 
     def refresh_sessions(self) -> None:
@@ -580,6 +589,11 @@ class WingmanApp(PanelMixin, ToolsUIMixin, App):
   [#7aa2f7]/export[/]         Export session to markdown
   [#7aa2f7]/export json[/]    Export as JSON
   [#7aa2f7]/import <path>[/]  Import from file
+
+[bold #a9b1d6]Forking[/]
+  [#7aa2f7]/fork[/]           Open the fork picker (pick a point in history)
+  [#7aa2f7]/fork <n>[/]       Rewind n user turns, then fork (0 = clone all)
+  [#7aa2f7]/forks[/]          List forks of this session
 
 [bold #a9b1d6]Config[/]
   [#7aa2f7]/model[/]          Switch model

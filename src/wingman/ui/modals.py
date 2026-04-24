@@ -11,7 +11,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from ..config import save_api_key
+from ..config import load_base_url, save_api_key
 
 
 class APIKeyScreen(ModalScreen[str | None]):
@@ -53,7 +53,11 @@ class APIKeyScreen(ModalScreen[str | None]):
         status.set_classes("validating")
 
         try:
-            client = AsyncDedalus(api_key=key)
+            base_url = load_base_url()
+            kwargs: dict = {"api_key": key}
+            if base_url:
+                kwargs["base_url"] = base_url
+            client = AsyncDedalus(**kwargs)
             await client.models.list()
             save_api_key(key)
             self.dismiss(key)
@@ -184,6 +188,129 @@ class MemoryModal(ModalScreen[tuple[str, str | None] | None]):
 
     def action_add(self) -> None:
         self.dismiss(("add", None))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+def _message_text(msg: dict) -> str:
+    """Flatten a message's content to plain text for previews and input prefill."""
+    content = msg.get("content") or ""
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+class ForkPickerModal(ModalScreen[tuple[int, str | None] | None]):
+    """Pick a point in the active conversation to fork from.
+
+    Dismisses with (cut_at, prefill) or None if canceled. The fork keeps
+    messages[:cut_at]. If prefill is not None, the new panel's input field is
+    seeded with that text.
+
+    Semantics by role:
+      HEAD row     : (len(messages), None)        - clone everything
+      user row N   : (N, original_text)           - fork BEFORE the user msg;
+                                                    prefill input so the user
+                                                    can rewrite that turn.
+      other row N  : (N + 1, None)                - fork AFTER; branch from
+                                                    the response.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("q", "cancel", "Cancel"),
+    ]
+
+    MAX_PREVIEW = 80
+
+    ROLE_COLOR = {
+        "user": "#7aa2f7",
+        "assistant": "#9ece6a",
+        "tool": "#e0af68",
+        "system": "#bb9af7",
+    }
+
+    def __init__(self, messages: list[dict], **kwargs):
+        super().__init__(**kwargs)
+        self.messages = messages
+
+    def compose(self):
+        with Vertical():
+            yield Label("Fork from...", classes="title")
+            items = [
+                ListItem(
+                    Label("[#9ece6a]HEAD[/]    Clone everything (full fork)"),
+                    id="fork-item-head",
+                )
+            ]
+            for i, msg in enumerate(self.messages):
+                items.append(
+                    ListItem(
+                        Label(self._format_row(i, msg)),
+                        id=f"fork-item-{i}",
+                    )
+                )
+            yield ListView(*items)
+            yield Static(
+                "User msg = rewrite that turn (input pre-filled).  Assistant msg = branch after that response.",
+                classes="hint",
+            )
+            yield Static(
+                "Up/Down navigate  .  Enter select  .  Esc cancel",
+                classes="hint",
+            )
+
+    def _format_row(self, idx: int, msg: dict) -> str:
+        role = msg.get("role", "?")
+        content = _message_text(msg)
+        # Segment-based assistant messages: flatten text+tool to a preview.
+        if not content and "segments" in msg:
+            parts = []
+            for seg in msg["segments"]:
+                parts.append(seg.get("content") or seg.get("command") or "")
+            content = " ".join(p for p in parts if p)
+        preview = content[: self.MAX_PREVIEW].replace("\n", " ")
+        if len(content) > self.MAX_PREVIEW:
+            preview += "..."
+        color = self.ROLE_COLOR.get(role, "#a9b1d6")
+        return f"[dim]{idx:>3}[/] [{color}]{role:<9}[/] {escape(preview)}"
+
+    def on_mount(self) -> None:
+        # Land on the latest message: that's where most forks will happen.
+        try:
+            lv = self.query_one(ListView)
+            if self.messages:
+                lv.index = len(self.messages)  # last message row (HEAD is index 0)
+                lv.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    @on(ListView.Highlighted)
+    def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item:
+            event.item.scroll_visible()
+
+    @on(ListView.Selected)
+    def on_select(self, event: ListView.Selected) -> None:
+        if not event.item or not event.item.id:
+            return
+        item_id = event.item.id
+        if item_id == "fork-item-head":
+            self.dismiss((len(self.messages), None))
+            return
+        idx = int(item_id.rsplit("-", 1)[1])
+        msg = self.messages[idx]
+        if msg.get("role") == "user":
+            # Fork BEFORE: drops this user msg; prefill input with its text so
+            # the user can edit the turn. Resulting fork ends in an assistant
+            # response (clean state).
+            self.dismiss((idx, _message_text(msg)))
+        else:
+            # Fork AFTER: assistant/tool/other. Keep through the selected row.
+            self.dismiss((idx + 1, None))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

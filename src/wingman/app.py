@@ -229,7 +229,11 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         cwd_text = f" │ [dim]{escape(cwd_display)}[/]"
 
         base_url = load_base_url()
-        base_text = f" │ [#e0af68]{base_url.split('//')[1][:30]}[/]" if base_url else ""
+        if base_url:
+            host = base_url.split("//", 1)[1] if "//" in base_url else base_url
+            base_text = f" │ [#e0af68]{host[:30]}[/]"
+        else:
+            base_text = ""
         status = f"{session_text} │ {model_short}{base_text}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
         self.query_one("#status", Static).update(Text.from_markup(status))
 

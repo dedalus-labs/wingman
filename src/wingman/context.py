@@ -163,7 +163,7 @@ class ContextManager:
 
         target_tokens = int(self.context_limit * COMPACT_TARGET)
         keep_recent = 4
-        recent_tokens = sum(estimate_message_tokens(m) for m in self.messages[-keep_recent:])
+        recent_tokens = sum(estimate_message_tokens(msg) for msg in self.messages[-keep_recent:])
 
         while keep_recent < len(self.messages) - 2:
             next_msg = self.messages[-(keep_recent + 1)]

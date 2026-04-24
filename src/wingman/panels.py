@@ -73,10 +73,10 @@ class PanelMixin:
 
         def do_refresh():
             force_compact = len(self.panels) > 1
-            for p in self.panels:
+            for panel in self.panels:
                 try:
-                    p.query_one(".panel-welcome")
-                    p._show_welcome(force_compact=force_compact)
+                    panel.query_one(".panel-welcome")
+                    panel._show_welcome(force_compact=force_compact)
                 except Exception:
                     pass
 

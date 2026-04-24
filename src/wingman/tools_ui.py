@@ -1,33 +1,37 @@
-"""Tool-to-UI bridge mixin for wingman.
+"""UI callbacks for the tool execution layer.
 
-Thread-safe methods that the tool execution layer (tools.py) calls
-to mount widgets, update command status, and show diff modals.
+Methods that tools.py calls to show command status widgets,
+update the thinking spinner, and display diff modals.
 
 """
 
 from __future__ import annotations
 
 
-class ToolBridgeMixin:
-    """Bridge between tool execution and TUI widgets.
+class ToolsUIMixin:
+    """UI methods called by tools.py via the app instance reference."""
 
-    These methods are called from tools.py via the app instance
-    reference. They handle thread-safe widget mounting and updates.
+    def resolve_panel(self, panel_id: str | None = None):
+        """Find a panel by ID, falling back to the active panel.
 
-    """
+        Args:
+            panel_id: Panel identifier, or None for active panel.
+
+        Returns:
+            Panel instance or None.
+
+        """
+        if panel_id:
+            for panel in self.panels:
+                if panel.panel_id == panel_id:
+                    return panel
+        return self.active_panel
 
     def _mount_command_status(self, command: str, widget_id: str, panel_id: str | None = None) -> None:
         """Mount a command status widget in the chat."""
         from .ui import CommandStatus
 
-        panel = None
-        if panel_id:
-            for p in self.panels:
-                if p.panel_id == panel_id:
-                    panel = p
-                    break
-        if not panel:
-            panel = self.active_panel
+        panel = self.resolve_panel(panel_id)
         if not panel:
             return
         chat = panel.get_chat_container()
@@ -55,14 +59,7 @@ class ToolBridgeMixin:
         """Update the thinking spinner status text."""
         from .ui import Thinking
 
-        panel = None
-        if panel_id:
-            for p in self.panels:
-                if p.panel_id == panel_id:
-                    panel = p
-                    break
-        if not panel:
-            panel = self.active_panel
+        panel = self.resolve_panel(panel_id)
         if not panel:
             return
         try:

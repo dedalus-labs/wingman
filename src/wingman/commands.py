@@ -74,15 +74,78 @@ class Commands:
             "import": lambda: self.import_file(arg),
             "fork": lambda: self.app.forking.fork(arg),
             "forks": lambda: self.app.forking.forks(arg),
+            "skills": lambda: self.skills_list(),
         }
 
         handler = handlers.get(command)
         if handler:
             handler()
+        elif self.app.skills.get(command):
+            self.invoke_skill(command, arg)
         else:
             self.app.show_info(f"Unknown command: {command}")
 
     # --- Simple commands ---
+
+    def invoke_skill(self, name: str, args: str) -> None:
+        """Expand a skill and send it to the model as a one-shot prompt.
+
+        The expanded skill content is injected as a user message,
+        streamed to the model, and the model's response persists in
+        the conversation. The skill prompt itself is transient.
+
+        Args:
+            name: Skill name.
+            args: User-provided arguments.
+
+        """
+        import time
+
+        from .sessions import save_session
+
+        prompt = self.app.skills.invoke(name, args)
+        if not prompt:
+            return
+
+        panel = self.app.active_panel
+        if not panel:
+            return
+
+        if panel._generating:
+            self.app.notify("Wait for response to complete", severity="warning", timeout=2)
+            return
+
+        # Remove welcome message if present
+        try:
+            for child in panel.get_chat_container().children:
+                if "panel-welcome" in child.classes:
+                    child.remove()
+                    break
+        except Exception:
+            pass
+
+        # Ensure session exists
+        if not panel.session_id:
+            panel.session_id = f"chat-{int(time.time() * 1000)}"
+            save_session(panel.session_id, [])
+            self.app.refresh_sessions()
+            self.app.update_status()
+
+        # Show the skill invocation in chat (not the full prompt)
+        display = f"/{name}" + (f" {args}" if args else "")
+        panel.add_message("user", display)
+
+        # Inject expanded prompt as a transient message for the model
+        panel.messages.append({"role": "user", "content": prompt, "_skill": True})
+
+        from .ui import Thinking
+
+        chat = panel.get_chat_container()
+        thinking = Thinking(id="thinking")
+        chat.mount(thinking)
+        panel.get_scroll_container().scroll_end(animate=False)
+
+        self.app.streaming.send_message(panel, prompt, thinking)
 
     def ps(self) -> None:
         """List background processes."""
@@ -106,6 +169,18 @@ class Commands:
     def feature(self) -> None:
         """Open feature request."""
         self.app.open_github_issue("feature_request.yml")
+
+    def skills_list(self) -> None:
+        """List available skills."""
+        skills = self.app.skills.list_skills()
+        if not skills:
+            self.app.show_info("[dim]No skills found. Add skills to .agents/skills/[/]")
+            return
+        lines = ["[bold #7aa2f7]Skills[/] (use /skill-name to invoke)\n"]
+        for skill in skills:
+            hint = f" [dim]{skill.argument_hint}[/]" if skill.argument_hint else ""
+            lines.append(f"  [#7aa2f7]/{skill.name}[/]{hint}  [dim]{skill.description[:60]}[/]")
+        self.app.show_info("\n".join(lines))
 
     def ls(self, arg: str) -> None:
         """List files in working directory."""
@@ -428,7 +503,7 @@ Useful for: API patterns, file locations, conventions.
                 if msg["role"] in ("user", "assistant") and msg.get("content"):
                     content = msg["content"]
                     if isinstance(content, list):
-                        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+                        content = " ".join(part.get("text", "") for part in content if isinstance(part, dict))
                     panel.messages.append({"role": msg["role"], "content": content})
                     count += 1
             self.app.update_status()

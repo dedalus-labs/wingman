@@ -26,8 +26,8 @@ htmlcov/
 # MCP
 **/.mcp.json
 
-# App data (user-specific)
-**/.wingman/
+# App data (user-specific). Repo-root .wingman/ holds the skills mirror,
+# which IS tracked; user config lives in ~/.wingman/ and never enters the repo.
 **/.agent/
 
 # OS

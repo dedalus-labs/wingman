@@ -7,6 +7,8 @@ to mount widgets, update command status, and show diff modals.
 
 from __future__ import annotations
 
+from textual import work
+
 
 class ToolBridgeMixin:
     """Bridge between tool execution and TUI widgets.
@@ -71,8 +73,13 @@ class ToolBridgeMixin:
         except Exception:
             pass
 
+    @work(thread=False)
     async def _show_diff_modal(self, path: str, old_string: str, new_string: str) -> None:
-        """Display diff modal and handle approval."""
+        """Display diff modal and handle approval.
+
+        @work so sync callers (show_diff_approval from the tool thread)
+        don't orphan the coroutine and leave the user without a prompt.
+        """
         from .tools import set_edit_result
         from .ui import DiffModal
 

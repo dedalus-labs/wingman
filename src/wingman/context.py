@@ -1,8 +1,17 @@
-"""Context management and token tracking."""
+"""Context management, token tracking, and compaction."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from dedalus_labs import AsyncDedalus
+
+from .sessions import save_session
+
+if TYPE_CHECKING:
+    from .app import WingmanApp
+    from .ui import ChatPanel
 
 # Context window sizes from https://models.dev/api.json
 # Models not listed here fall back to 128K default
@@ -226,3 +235,64 @@ Provide a dense summary (max 500 words):"""
             if isinstance(content, str):
                 words.extend(content.split()[:10])
         return " ".join(words[:20]) + "..."
+
+
+class CompactionController:
+    """App-level compaction orchestration.
+
+    Bridges ``ContextManager.compact()`` with the TUI: shows spinners,
+    saves sessions, handles errors. Attached as ``self.compaction``.
+
+    """
+
+    def __init__(self, app: WingmanApp) -> None:
+        self.app = app
+
+    async def compact(self) -> None:
+        """Manually trigger context compaction."""
+        panel = self.app.active_panel
+        if not panel:
+            return
+        if self.app.client is None:
+            self.app.show_info("[#f7768e]Please enter your API key first.[/]")
+            return
+        if len(panel.context.messages) < 4:
+            self.app.show_info("Not enough messages to compact")
+            return
+
+        from .ui import Thinking
+
+        chat = panel.get_chat_container()
+        thinking = Thinking(id="compact-thinking")
+        chat.mount(thinking)
+        self.app.show_info("Compacting context...")
+
+        try:
+            result = await panel.context.compact(self.app.client)
+            thinking.remove()
+            self.app.show_info(f"[#9ece6a]{result}[/]")
+            self.app.update_status()
+            if panel.session_id:
+                save_session(panel.session_id, panel.context.messages)
+        except Exception as e:
+            thinking.remove()
+            self.app.show_info(f"[#f7768e]Compact failed: {e}[/]")
+
+    async def check_auto(self, panel: ChatPanel) -> None:
+        """Auto-compact if context is running low.
+
+        Args:
+            panel: Panel to check and potentially compact.
+
+        """
+        if self.app.client is None:
+            return
+        if panel.context.needs_compacting:
+            remaining = int((1.0 - panel.context.usage_percent) * 100)
+            panel.show_info(f"[#e0af68]Context low ({remaining}% remaining) - auto-compacting...[/]")
+            try:
+                result = await panel.context.compact(self.app.client)
+                panel.show_info(f"[#9ece6a]{result}[/]")
+                self.app.update_status()
+            except Exception as e:
+                panel.show_info(f"[#f7768e]Auto-compact failed: {e}[/]")

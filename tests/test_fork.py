@@ -127,7 +127,7 @@ async def test_fork_full_clone_renders_parent_messages(isolated_sessions):
             session_id="parent-sess",
         )
 
-        app._cmd_fork("0")  # rewind 0 turns = full clone, no picker
+        app.forking.fork("0")  # rewind 0 turns = full clone, no picker
         await pilot.pause()
         await pilot.pause()  # let on_mount + refresh queue drain
 
@@ -161,7 +161,7 @@ async def test_bare_fork_opens_picker_modal(isolated_sessions):
             [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
             session_id="p",
         )
-        app._cmd_fork("")
+        app.forking.fork("")
         await pilot.pause()
 
         # Modal is on the screen stack. No new panel yet.
@@ -187,7 +187,7 @@ async def test_fork_rewind_drops_last_user_turn(isolated_sessions):
             session_id="p",
         )
 
-        app._cmd_fork("1")  # rewind 1 user turn
+        app.forking.fork("1")  # rewind 1 user turn
         await pilot.pause()
         await pilot.pause()
 
@@ -217,7 +217,7 @@ async def test_fork_rewind_skips_tool_messages(isolated_sessions):
             session_id="p",
         )
 
-        app._cmd_fork("1")
+        app.forking.fork("1")
         await pilot.pause()
         await pilot.pause()
 
@@ -235,7 +235,7 @@ async def test_fork_rewind_too_many_is_rejected(isolated_sessions):
         panel = app.active_panel
         _seed_panel(panel, [{"role": "user", "content": "q1"}], session_id="p")
 
-        app._cmd_fork("5")
+        app.forking.fork("5")
         await pilot.pause()
         # No new panel should have been created.
         assert len(app.panels) == 1
@@ -248,7 +248,7 @@ async def test_fork_with_no_messages_is_rejected(isolated_sessions):
 
     app = WingmanApp()
     async with app.run_test() as pilot:
-        app._cmd_fork("")
+        app.forking.fork("")
         await pilot.pause()
         # No messages: picker is not opened either.
         assert not isinstance(app.screen, ForkPickerModal)
@@ -263,7 +263,7 @@ async def test_fork_rejects_nonnumeric_arg(isolated_sessions):
     async with app.run_test() as pilot:
         panel = app.active_panel
         _seed_panel(panel, [{"role": "user", "content": "q"}], session_id="p")
-        app._cmd_fork("banana")
+        app.forking.fork("banana")
         await pilot.pause()
         assert len(app.panels) == 1
 
@@ -286,7 +286,7 @@ async def test_fork_respects_panel_cap(isolated_sessions):
             [{"role": "user", "content": "q1"}],
             session_id="capped",
         )
-        app._cmd_fork("0")  # full clone via shortcut, bypassing picker
+        app.forking.fork("0")  # full clone via shortcut, bypassing picker
         await pilot.pause()
 
         assert len(app.panels) == 4
@@ -308,7 +308,7 @@ async def test_picker_cancel_does_nothing(isolated_sessions):
             [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
             session_id="p",
         )
-        app._cmd_fork("")
+        app.forking.fork("")
         await pilot.pause()
         # Dismiss as the user would with Esc.
         app.screen.action_cancel()
@@ -334,7 +334,7 @@ async def test_picker_assistant_row_branches_after(isolated_sessions):
             ],
             session_id="p",
         )
-        app._cmd_fork("")
+        app.forking.fork("")
         await pilot.pause()
 
         # Assistant 'a1' is at index 1. Fork-after = (2, None).
@@ -366,7 +366,7 @@ async def test_picker_user_row_forks_before_and_prefills(isolated_sessions):
             ],
             session_id="p",
         )
-        app._cmd_fork("")
+        app.forking.fork("")
         await pilot.pause()
 
         # User 'q2 original' is at index 2. Picker dispatches (2, "q2 original").
@@ -392,7 +392,7 @@ async def test_picker_head_option_clones_all(isolated_sessions):
             {"role": "assistant", "content": "a1"},
         ]
         _seed_panel(app.active_panel, msgs, session_id="p")
-        app._cmd_fork("")
+        app.forking.fork("")
         await pilot.pause()
 
         # HEAD row dismisses with (len(messages), None).
@@ -422,7 +422,7 @@ async def test_fork_rewind_shortcut_prefills_last_user_turn(isolated_sessions):
             ],
             session_id="p",
         )
-        app._cmd_fork("1")
+        app.forking.fork("1")
         await pilot.pause()
         await pilot.pause()
 
@@ -534,7 +534,7 @@ async def test_marker_click_focuses_fork_if_already_open(isolated_sessions):
         assert app.panels[1].session_id == "child"
 
         # Switch focus back to the parent panel and click again.
-        app._set_active_panel(0)
+        app.set_active_panel(0)
         await pilot.pause()
         markers[0].post_message(BranchMarker.OpenFork("child"))
         await pilot.pause()
@@ -565,7 +565,7 @@ async def test_fork_live_injects_marker_into_parent(isolated_sessions):
         await pilot.pause()
         assert _marker_widgets(app.active_panel) == []
 
-        app._cmd_fork("0")  # full clone via shortcut, no modal
+        app.forking.fork("0")  # full clone via shortcut, no modal
         await pilot.pause()
         await pilot.pause()
 

@@ -141,7 +141,9 @@ def load_base_url() -> str | None:
     """Load API base URL from environment or config.
 
     Checks ``BASE_URL`` env var first, then ``base_url`` in
-    ``~/.wingman/config.json``. Returns None to use the SDK default.
+    ``~/.wingman/config.json``. Auto-prepends ``https://`` if the value
+    has no scheme so a bare host like ``preview.api.dedaluslabs.ai``
+    doesn't crash the URL parser. Returns None to use the SDK default.
 
     Returns:
         Base URL string or None.
@@ -149,19 +151,19 @@ def load_base_url() -> str | None:
     """
     import os
 
-    env_url = os.environ.get("BASE_URL")
-    if env_url:
-        return env_url.rstrip("/")
-
-    if CONFIG_FILE.exists():
+    raw = os.environ.get("BASE_URL")
+    if not raw and CONFIG_FILE.exists():
         try:
             config = oj.loads(CONFIG_FILE.read_text())
-            url = config.get("base_url")
-            if url:
-                return url.rstrip("/")
+            raw = config.get("base_url")
         except Exception:
             pass
-    return None
+    if not raw:
+        return None
+    raw = raw.rstrip("/")
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    return raw
 
 
 def save_api_key(api_key: str) -> None:

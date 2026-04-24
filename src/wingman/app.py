@@ -163,6 +163,11 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         """
         await self.streaming.send_message(panel, text, thinking, images)
 
+    @work(thread=False)
+    async def do_compact(self) -> None:
+        """Schedule /compact as a worker (sync dispatch lambdas need @work)."""
+        await self.compaction.compact()
+
     def _check_background_processes(self) -> None:
         """Periodic check for completed background processes."""
         completed = check_completed_processes()

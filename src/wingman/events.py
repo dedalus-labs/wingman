@@ -300,4 +300,4 @@ class EventHandler:
         chat.mount(thinking)
         panel.get_scroll_container().scroll_end(animate=False)
 
-        self.app.streaming.send_message(panel, text, thinking, images_to_send)
+        self.app.send_message(panel, text, thinking, images_to_send)

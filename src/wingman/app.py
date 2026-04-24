@@ -153,6 +153,16 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
             MARKETPLACE_SERVERS.clear()
             MARKETPLACE_SERVERS.extend(servers)
 
+    @work(thread=False)
+    async def send_message(self, panel, text, thinking, images=None) -> None:
+        """Schedule streaming a user message as a Textual worker.
+
+        Sync event handlers (on_submit) fire-and-forget into this. The
+        @work decorator turns the call into a scheduled worker so the
+        coroutine isn't orphaned.
+        """
+        await self.streaming.send_message(panel, text, thinking, images)
+
     def _check_background_processes(self) -> None:
         """Periodic check for completed background processes."""
         completed = check_completed_processes()

@@ -116,6 +116,26 @@ def list_forks(parent_session_id: str) -> list[str]:
     return forks
 
 
+def get_fork_points(parent_session_id: str) -> list[tuple[str, int]]:
+    """Return (fork_session_id, forked_at_index) pairs for all children.
+
+    Used by the scrollback to render BranchMarker widgets at the divergence
+    point of each fork. Skips forks that are missing forked_at_index.
+    """
+    sessions = load_sessions()
+    points: list[tuple[str, int]] = []
+    for sid, data in sessions.items():
+        if not isinstance(data, dict):
+            continue
+        if data.get("parent_session_id") != parent_session_id:
+            continue
+        idx = data.get("forked_at_index")
+        if idx is None:
+            continue
+        points.append((sid, int(idx)))
+    return points
+
+
 def fork_session_copy(
     new_id: str,
     messages: list[dict],

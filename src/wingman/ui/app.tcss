@@ -88,6 +88,17 @@ StreamingText {
     margin: 0 0 1 0;
 }
 
+.branch-marker {
+    height: 1;
+    margin: 0 0 1 0;
+    padding: 0 2;
+}
+
+.branch-marker:hover {
+    background: #24283b;
+    color: #7aa2f7;
+}
+
 .hidden {
     display: none;
 }

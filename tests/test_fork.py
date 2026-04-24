@@ -402,6 +402,175 @@ async def test_fork_rewind_shortcut_prefills_last_user_turn(isolated_sessions):
         assert fork.get_input().value == "second"
 
 
+# ---------------------------------------------------------------- branch markers
+
+
+def _marker_widgets(panel) -> list:
+    from wingman.ui.widgets import BranchMarker
+
+    chat = panel.get_chat_container()
+    return [w for w in chat.children if isinstance(w, BranchMarker)]
+
+
+@pytest.mark.asyncio
+async def test_parent_renders_branch_markers_for_its_forks(isolated_sessions):
+    """Loading a parent session shows BranchMarkers at each fork's divergence point."""
+    from wingman.app import WingmanApp
+    from wingman.sessions import fork_session_copy, save_session
+
+    parent_messages = [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q2"},
+        {"role": "assistant", "content": "a2"},
+    ]
+    save_session("parent", parent_messages, working_dir="/tmp")
+    fork_session_copy("f-at-2", parent_messages[:2], "parent", 2, working_dir="/tmp")
+    fork_session_copy("f-at-4", parent_messages[:4], "parent", 4, working_dir="/tmp")
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()  # let initial welcome render first; load wipes it after
+        app.active_panel.load_session("parent")
+        await pilot.pause()
+
+        markers = _marker_widgets(app.active_panel)
+        assert len(markers) == 2
+        fork_ids = sorted(m.fork_session_id for m in markers)
+        assert fork_ids == ["f-at-2", "f-at-4"]
+
+
+@pytest.mark.asyncio
+async def test_session_with_no_forks_renders_no_markers(isolated_sessions):
+    from wingman.app import WingmanApp
+    from wingman.sessions import save_session
+
+    save_session("lonely", [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}])
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()  # let initial welcome render first; load wipes it after
+        app.active_panel.load_session("lonely")
+        await pilot.pause()
+        assert _marker_widgets(app.active_panel) == []
+
+
+@pytest.mark.asyncio
+async def test_marker_click_opens_fork_in_new_panel(isolated_sessions):
+    """Posting OpenFork on the marker opens the child session in a new panel."""
+    from wingman.app import WingmanApp
+    from wingman.sessions import fork_session_copy, save_session
+    from wingman.ui.widgets import BranchMarker
+
+    save_session("p", [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}])
+    fork_session_copy("child", [{"role": "user", "content": "q"}], "p", 1)
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()  # let initial welcome render first; load wipes it after
+        app.active_panel.load_session("p")
+        await pilot.pause()
+
+        markers = _marker_widgets(app.active_panel)
+        assert len(markers) == 1
+        markers[0].post_message(BranchMarker.OpenFork("child"))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(app.panels) == 2
+        assert app.panels[1].session_id == "child"
+
+
+@pytest.mark.asyncio
+async def test_marker_click_focuses_fork_if_already_open(isolated_sessions):
+    """Clicking a marker when the fork is already in a panel focuses it, no duplicate."""
+    from wingman.app import WingmanApp
+    from wingman.sessions import fork_session_copy, save_session
+    from wingman.ui.widgets import BranchMarker
+
+    save_session("p", [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}])
+    fork_session_copy("child", [{"role": "user", "content": "q"}], "p", 1)
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.active_panel.load_session("p")
+        await pilot.pause()
+
+        markers = _marker_widgets(app.active_panel)
+        # First click: opens the fork in panel 1.
+        markers[0].post_message(BranchMarker.OpenFork("child"))
+        await pilot.pause()
+        await pilot.pause()
+        assert len(app.panels) == 2
+        assert app.panels[1].session_id == "child"
+
+        # Switch focus back to the parent panel and click again.
+        app._set_active_panel(0)
+        await pilot.pause()
+        markers[0].post_message(BranchMarker.OpenFork("child"))
+        await pilot.pause()
+        await pilot.pause()
+
+        # No duplicate panel: same count, focus moved to the existing fork panel.
+        assert len(app.panels) == 2, "marker re-click must not duplicate the panel"
+        assert app.active_panel_idx == 1
+        assert app.active_panel.session_id == "child"
+
+
+@pytest.mark.asyncio
+async def test_fork_live_injects_marker_into_parent(isolated_sessions):
+    """After /fork, the parent panel shows a new BranchMarker without manual reload."""
+    from wingman.app import WingmanApp
+    from wingman.sessions import save_session
+
+    save_session(
+        "p",
+        [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}],
+    )
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.active_panel.load_session("p")
+        await pilot.pause()
+        await pilot.pause()
+        assert _marker_widgets(app.active_panel) == []
+
+        app._cmd_fork("0")  # full clone via shortcut, no modal
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(app.panels) == 2
+        parent_panel = app.panels[0]
+        markers = _marker_widgets(parent_panel)
+        assert len(markers) == 1, f"Parent should have 1 marker after fork; got {len(markers)}"
+
+
+@pytest.mark.asyncio
+async def test_head_fork_marker_renders_at_end(isolated_sessions):
+    """A fork with forked_at_index == len(messages) lands AFTER the last message."""
+    from wingman.app import WingmanApp
+    from wingman.sessions import fork_session_copy, save_session
+    from wingman.ui.widgets import BranchMarker, ChatMessage
+
+    msgs = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    save_session("p", msgs)
+    fork_session_copy("head-fork", msgs, "p", len(msgs))
+
+    app = WingmanApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()  # let initial welcome render first; load wipes it after
+        app.active_panel.load_session("p")
+        await pilot.pause()
+
+        chat = app.active_panel.get_chat_container()
+        children = list(chat.children)
+        # Find the last ChatMessage and the BranchMarker: the marker must come after.
+        last_chat_idx = max(i for i, w in enumerate(children) if isinstance(w, ChatMessage))
+        marker_idx = next(i for i, w in enumerate(children) if isinstance(w, BranchMarker))
+        assert marker_idx > last_chat_idx
+
+
 def test_picker_format_row_handles_segments_and_lists():
     """Preview string is generated defensively for all message shapes."""
     from wingman.ui.modals import ForkPickerModal

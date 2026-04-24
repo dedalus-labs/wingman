@@ -58,6 +58,7 @@ from .tools import (
 )
 from .ui import (
     APIKeyScreen,
+    BranchMarker,
     ChatPanel,
     CommandStatus,
     DiffModal,
@@ -971,6 +972,20 @@ class WingmanApp(App):
         except ValueError:
             pass
 
+    def on_branch_marker_open_fork(self, event: BranchMarker.OpenFork) -> None:
+        """Open the forked session in a new panel, or focus it if already open."""
+        fork_id = event.fork_session_id
+        if not fork_id:
+            return
+        # Dedupe: if the fork is already shown in some panel, just focus it.
+        for idx, existing in enumerate(self.panels):
+            if existing.session_id == fork_id:
+                self._set_active_panel(idx)
+                return
+        panel = self._create_panel(initial_session_id=fork_id)
+        if panel is not None:
+            self._refresh_sessions()
+
     def action_close_panel(self) -> None:
         """Close the active panel (/close)."""
         if len(self.panels) <= 1:
@@ -1452,6 +1467,12 @@ Useful for: API patterns, file locations, conventions.
         if not ok:
             self._show_info(f"[#f7768e]Fork id collision:[/] {new_id}")
             return
+
+        # Re-render the parent panel inline so its new BranchMarker shows up
+        # without the user having to close and re-open the session.
+        if parent_id:
+            save_session(parent_id, panel.messages, working_dir=str(panel.working_dir))
+            panel.load_session(parent_id)
 
         if len(self.panels) >= 4:
             self._refresh_sessions()

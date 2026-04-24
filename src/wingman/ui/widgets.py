@@ -21,7 +21,7 @@ from ..command_completion import CompletionContext, apply_completion, get_comple
 from ..config import APP_CREDIT, APP_VERSION, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
-from ..sessions import get_session, get_session_working_dir, save_session
+from ..sessions import get_fork_points, get_session, get_session_working_dir, save_session
 from .welcome import WELCOME_ART, WELCOME_ART_COMPACT
 
 
@@ -541,6 +541,26 @@ class CommandStatus(Static):
 _panel_counter: int = 0
 
 
+class BranchMarker(Static):
+    """Inline scrollback marker showing a fork diverged here. Click opens it."""
+
+    class OpenFork(Message):
+        def __init__(self, fork_session_id: str) -> None:
+            super().__init__()
+            self.fork_session_id = fork_session_id
+
+    def __init__(self, fork_session_id: str, message_count: int, **kwargs):
+        short = fork_session_id.rsplit("-fork-", 1)[-1][:10] if "-fork-" in fork_session_id else fork_session_id[-10:]
+        plural = "s" if message_count != 1 else ""
+        text = f"[dim #565f89]|-- fork: {escape(short)} ({message_count} msg{plural}) . click to open[/]"
+        super().__init__(Text.from_markup(text), classes="branch-marker", **kwargs)
+        self.fork_session_id = fork_session_id
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(self.OpenFork(self.fork_session_id))
+
+
 class ChatPanel(Vertical):
     """Self-contained chat panel with session, context, and input."""
 
@@ -722,9 +742,21 @@ class ChatPanel(Vertical):
         self.working_dir = Path(saved_dir) if saved_dir else Path.cwd()
         chat = self.get_chat_container()
         chat.remove_children()
+
+        # Group this session's forks by divergence point, so we can inject a
+        # BranchMarker right before the message where each fork diverged.
+        forks_by_index: dict[int, list[tuple[str, int]]] = {}
+        for fork_id, cut_at in get_fork_points(session_id):
+            forks_by_index.setdefault(cut_at, []).append((fork_id, cut_at))
+
+        def _emit_markers(idx: int) -> None:
+            for fork_id, msg_count in forks_by_index.get(idx, []):
+                chat.mount(BranchMarker(fork_id, msg_count))
+
         base_id = int(time.time() * 1000)
         widget_id = 0
-        for msg in self.messages:
+        for i, msg in enumerate(self.messages):
+            _emit_markers(i)
             if msg["role"] not in ("user", "assistant"):
                 continue
 
@@ -776,6 +808,8 @@ class ChatPanel(Vertical):
                 chat.mount(ChatMessage(msg["role"], display_text, image_count=img_count))
             else:
                 chat.mount(ChatMessage(msg["role"], content))
+        # HEAD-fork markers (forked_at_index == len(messages)) land after everything.
+        _emit_markers(len(self.messages))
         self.get_scroll_container().scroll_end(animate=False)
 
     def action_focus_input(self) -> None:

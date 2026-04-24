@@ -2,6 +2,7 @@
 
 from .modals import APIKeyScreen, DiffModal, InputModal, SelectionModal
 from .widgets import (
+    BranchMarker,
     ChatMessage,
     ChatPanel,
     CommandStatus,
@@ -17,6 +18,7 @@ __all__ = [
     "DiffModal",
     "InputModal",
     "SelectionModal",
+    "BranchMarker",
     "ChatMessage",
     "ChatPanel",
     "CommandStatus",

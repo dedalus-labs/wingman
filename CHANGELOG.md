@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/dedalus-labs/wingman/compare/v0.4.3...v0.5.0) (2026-04-25)
+
+
+### Features
+
+* add BASE_URL env var for custom API endpoints ([#29](https://github.com/dedalus-labs/wingman/issues/29)) ([a9d74f5](https://github.com/dedalus-labs/wingman/commit/a9d74f5e94923bb7fb4233b08e948b2efd2e30e5))
+* add install.sh for one-line uv-based installation ([100b02b](https://github.com/dedalus-labs/wingman/commit/100b02b90ef29ec654d441e6f329b9e0a831471f))
+* add WINGMAN_BASE_URL env var for custom API endpoints ([4c5b6ba](https://github.com/dedalus-labs/wingman/commit/4c5b6ba70e6aa18adf2c8e3b2dea1ca79c601afb))
+* **config:** add /base_url command with first-launch prompt ([2936bb5](https://github.com/dedalus-labs/wingman/commit/2936bb5dfea74dea9de37024fa5983b1dc0b39df))
+* **release:** publish to pypi and update homebrew on release ([ab0b425](https://github.com/dedalus-labs/wingman/commit/ab0b4257731e86857ee3a7099954a3f965675642))
+* **sessions:** add conversation forking with /fork command ([289f5bb](https://github.com/dedalus-labs/wingman/commit/289f5bb2b994503942716eaf0cb919a99601da10))
+* **ui:** add ForkPickerModal for point-in-history forking ([2d31773](https://github.com/dedalus-labs/wingman/commit/2d3177324fc70e0896924be35cb93d2fcb734e69))
+* **ui:** add inline branch markers for fork lineage ([66ebb5b](https://github.com/dedalus-labs/wingman/commit/66ebb5bd23631c5604d6acb70009b9531d0bfbce))
+* **ui:** fork picker splits rewrite vs continue by role ([baf3820](https://github.com/dedalus-labs/wingman/commit/baf3820c750234ef15554044085537eafebd6b45))
+* **ui:** show Loading models indicator during /v1/models fetch ([f6233ab](https://github.com/dedalus-labs/wingman/commit/f6233ab6344f877c9500b06f38575a7a44bca750))
+
+
+### Bug Fixes
+
+* allow Ctrl+D to exit when prompt is empty ([ee2b67c](https://github.com/dedalus-labs/wingman/commit/ee2b67cf73688d3036981d2f5a35c90cbd1a0fb6))
+* **app:** harden status bar against base_url without scheme ([4b38314](https://github.com/dedalus-labs/wingman/commit/4b3831414bdf7967ded0b918838ab9d9102718ef))
+* **app:** wrap /compact in [@work](https://github.com/work) so sync dispatch schedules it ([6feb308](https://github.com/dedalus-labs/wingman/commit/6feb3083995b0eba730009fa4248ff0649752b49))
+* **commands:** use panel._show_welcome (private name) after /delete ([c021e01](https://github.com/dedalus-labs/wingman/commit/c021e01f29757c32ae7395bec74f3ab3d312e56b))
+* **config:** auto-prepend https:// to bare base_url ([89cbc7f](https://github.com/dedalus-labs/wingman/commit/89cbc7f49c196bf9b87b8b1519bb4e95d3d7e3ec))
+* correct vouch workflow inputs and add contributors ([567a7d0](https://github.com/dedalus-labs/wingman/commit/567a7d092b056b0259519f888c3ba410847359cd))
+* **lint:** resolve all ruff violations and fix Ctrl+C tests ([#21](https://github.com/dedalus-labs/wingman/issues/21)) ([b6609f6](https://github.com/dedalus-labs/wingman/commit/b6609f652b948424db6d81427f1b2e2994487a75))
+* **sessions:** rename_session rewires children's parent_session_id ([e35d649](https://github.com/dedalus-labs/wingman/commit/e35d6491e05226b57eb408e30f4bab0f73d995dd))
+* **streaming:** wrap send_message in [@work](https://github.com/work) to restore streaming ([baf3754](https://github.com/dedalus-labs/wingman/commit/baf37545c909c54430346a1cbeabcace4abdc6e6))
+* **tools:** decorate _show_diff_modal with [@work](https://github.com/work) for sync callers ([4b55033](https://github.com/dedalus-labs/wingman/commit/4b55033ac1cba22c8dd0bf543f4e55364aa58926))
+* **ui:** keep slash command hint visible on exact match ([56efd73](https://github.com/dedalus-labs/wingman/commit/56efd73b56a4662e99600a0d64f0e5b441cca017))
+* **ui:** keep slash command hint visible on exact match ([#28](https://github.com/dedalus-labs/wingman/issues/28)) ([a588fb8](https://github.com/dedalus-labs/wingman/commit/a588fb880ce9a4afb0ef4a1a4242f8268ca0da6e))
+* **ui:** preserve typed text when attaching dragged image ([290522e](https://github.com/dedalus-labs/wingman/commit/290522e6deb620f0683e327473a3fc5c85b1c4de))
+* **ui:** render image count indicator as styled text ([e151b5f](https://github.com/dedalus-labs/wingman/commit/e151b5f011f015a9337b969d0d7f7ef7f8200f38))
+* **ui:** size quit-hint to content so image chips aren't clipped ([33af720](https://github.com/dedalus-labs/wingman/commit/33af720e7b0cfa9b354639d0520a0421f23ea40f))
+* **ui:** style BaseUrlScreen to match APIKeyScreen layout ([fb4c03a](https://github.com/dedalus-labs/wingman/commit/fb4c03ab91138afc45ba5c7b4c8d3b55be1293c5))
+* use BASE_URL as the canonical env var name ([be9fe2b](https://github.com/dedalus-labs/wingman/commit/be9fe2b2583f50e7b7fe3d2e3dd58dcbc735154c))
+
+
+### Documentation
+
+* add development workflow guide ([3fae11e](https://github.com/dedalus-labs/wingman/commit/3fae11e710fd30bf326402259ebe5d2365d8114b))
+
 ## [0.4.3](https://github.com/dedalus-labs/wingman/compare/v0.4.2...v0.4.3) (2026-01-11)
 
 

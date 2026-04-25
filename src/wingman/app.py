@@ -101,6 +101,9 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         self.panels: list[ChatPanel] = []
         self.active_panel_idx: int = 0
         self.last_ctrl_c: float | None = None
+        # Status-bar feedback while /v1/models is in flight.
+        self._models_loading: bool = False
+        self._models_loading_tick: int = 0
 
     def _init_client(self, api_key: str) -> None:
         """Initialize Dedalus client with API key, then schedule a model fetch."""
@@ -122,24 +125,42 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         """
         if self.client is None:
             return
+        # Clear the previous catalog up-front so a failed fetch doesn't leave
+        # stale ids from the old endpoint visible in the picker.
+        MODELS.clear()
+        self.model = ""
+        # Flip the status-bar indicator and start the dots animation.
+        self._models_loading = True
+        self._models_loading_tick = 0
+        self.update_status()
+        loading_timer = self.set_interval(0.35, self._tick_models_loading)
         try:
             response = await self.client.models.list()
             ids = [m.id for m in getattr(response, "data", []) if getattr(m, "id", None)]
         except Exception as e:
             self.notify(f"Failed to load models: {e}", severity="error", timeout=6.0)
             return
+        finally:
+            loading_timer.stop()
+            self._models_loading = False
+            self.update_status()
         if not ids:
             self.notify("Endpoint returned no models", severity="error", timeout=6.0)
             return
-        MODELS.clear()
         MODELS.extend(sorted(ids))
-        if not self.model or self.model not in MODELS:
-            self.model = MODELS[0]
+        self.model = MODELS[0]
         # Sync any open panels' context to the new default.
         for panel in self.panels:
             panel.context.model = self.model
         self.update_status()
         self.notify(f"Loaded {len(MODELS)} models", timeout=2.0)
+
+    def _tick_models_loading(self) -> None:
+        """Advance the dots animation while /v1/models is in flight."""
+        if not self._models_loading:
+            return
+        self._models_loading_tick = (self._models_loading_tick + 1) % 4
+        self.update_status()
 
     @property
     def active_panel(self) -> ChatPanel | None:
@@ -250,7 +271,11 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
             self.active_panel.get_input().focus()
 
     def update_status(self) -> None:
-        model_short = self.model.split("/")[-1]
+        if self._models_loading:
+            dots = "." * self._models_loading_tick
+            model_short = f"[#7aa2f7]Loading models{dots}[/]"
+        else:
+            model_short = self.model.split("/")[-1]
         panel = self.active_panel
         mcp_count = len(panel.mcp_servers) if panel else 0
         mcp_text = f" │ MCP: {mcp_count}" if mcp_count else ""
@@ -298,7 +323,10 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         else:
             base_text = ""
         status = f"{session_text} │ {model_short}{base_text}{code_text}{generating_text}{memory_text}{img_text}{mcp_text}{ctx_text}{panel_text}{cwd_text}"
-        self.query_one("#status", Static).update(Text.from_markup(status))
+        # The status widget may not be mounted yet (early on_mount calls) or
+        # may be gone (during teardown / model fetch finishing after exit).
+        with contextlib.suppress(Exception):
+            self.query_one("#status", Static).update(Text.from_markup(status))
 
     def refresh_sessions(self) -> None:
         tree = self.query_one("#sessions", Tree)
@@ -681,7 +709,7 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
   [#7aa2f7]/model[/]            Switch model
   [#7aa2f7]/context[/]          Show context usage
   [#7aa2f7]/key[/]              Set API key
-  [#7aa2f7]/base_url[/] [dim]\\[url][/]  Show or change the API base URL
+  [#7aa2f7]/base_url[/]         Set API base URL
 
 [bold #a9b1d6]App[/]
   [#7aa2f7]/exit[/]           Quit Wingman

@@ -30,6 +30,11 @@ DEDALUS_SITE_URL = "https://dedaluslabs.ai"
 MODELS: list[str] = []
 MARKETPLACE_SERVERS: list[dict] = []
 
+# Bulletins (welcome screen banners + tips) — currently dormant because no
+# active bulletins are published. The fetch is synchronous httpx and would
+# block the welcome render. Flip to True when there's something to show.
+BULLETINS_ENABLED = False
+
 # Commands for autocomplete (command, description)
 COMMANDS = [
     ("/new", "Start new chat"),

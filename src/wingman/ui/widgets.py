@@ -18,7 +18,7 @@ from textual.widgets import Input, Static
 
 from ..bulletin import get_bulletin_manager
 from ..command_completion import CompletionContext, apply_completion, get_completion_context, resolve_completion
-from ..config import APP_CREDIT, APP_VERSION, MODELS
+from ..config import APP_CREDIT, APP_VERSION, BULLETINS_ENABLED, MODELS
 from ..context import ContextManager
 from ..images import IMAGE_EXTENSIONS, CachedImage, create_image_message_from_cache
 from ..sessions import get_fork_points, get_session, get_session_working_dir, save_session
@@ -645,15 +645,19 @@ class ChatPanel(Vertical):
         use_big = self.size.width >= 70 and not force_compact
         art = WELCOME_ART if use_big else WELCOME_ART_COMPACT
 
-        # Get banner and tip from bulletin system
-        manager = get_bulletin_manager()
-        manager.load_sync("banners")
-        manager.load_sync("tips")
-        banners = manager.get_active("banners")
-        tips = manager.get_active("tips")
-
-        banner_line = banners[0].content if banners else ""
-        tip_line = random.choice(tips).content if tips else ""
+        # Get banner and tip from bulletin system. Skipped when bulletins
+        # are dormant (config.BULLETINS_ENABLED) so welcome doesn't block
+        # on synchronous httpx and the model fetch can start immediately.
+        banner_line = ""
+        tip_line = ""
+        if BULLETINS_ENABLED:
+            manager = get_bulletin_manager()
+            manager.load_sync("banners")
+            manager.load_sync("tips")
+            banners = manager.get_active("banners")
+            tips = manager.get_active("tips")
+            banner_line = banners[0].content if banners else ""
+            tip_line = random.choice(tips).content if tips else ""
         tip_text = f"\nTip: {tip_line}" if tip_line else ""
         welcome = f"""{art}
 [dim]{APP_CREDIT}[/]

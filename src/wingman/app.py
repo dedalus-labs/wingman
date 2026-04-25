@@ -166,13 +166,19 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
         # Set first panel as active
         if self.panels:
             self.panels[0].set_active(True)
-        # Check for API key, then base URL.
+        # First-launch flow:
+        #   1. APIKeyScreen if key not saved
+        #   2. BaseUrlScreen if base_url not saved (and not in env)
+        #   3. _init_client only after BOTH are resolved, so models don't
+        #      fetch against a URL the user is still picking.
         api_key = load_api_key()
-        if api_key:
-            self._init_client(api_key)
-            self._maybe_prompt_base_url()
-        else:
+        have_url = base_url_in_config() or load_base_url()
+        if not api_key:
             self.push_screen(APIKeyScreen(), self.on_api_key_entered)
+        elif not have_url:
+            self.push_screen(BaseUrlScreen(), self.on_base_url_entered)
+        else:
+            self._init_client(api_key)
         # Fetch marketplace servers in background
         self._init_dynamic_data()
         # Monitor background processes for completion
@@ -213,29 +219,35 @@ class WingmanApp(PanelMixin, ToolBridgeMixin, App):
                 self.notify(f"[{bg_id}] failed (exit {exit_code}): {cmd_short}", timeout=5.0, severity="error")
 
     def on_api_key_entered(self, api_key: str | None) -> None:
-        """Callback when API key is entered."""
-        if api_key:
+        """Callback when API key is entered.
+
+        On first launch we defer client init until base_url is also resolved,
+        otherwise models would fetch against a URL the user is still picking.
+        """
+        if not api_key:
+            return
+        if base_url_in_config() or load_base_url():
             self._init_client(api_key)
-            self._maybe_prompt_base_url()
             if self.active_panel:
                 self.active_panel.get_input().focus()
+        else:
+            self.push_screen(BaseUrlScreen(), self.on_base_url_entered)
 
-    def _maybe_prompt_base_url(self) -> None:
-        """On first launch, prompt for base_url if it isn't set anywhere yet.
+    def on_base_url_entered(self, url: str | None) -> None:
+        """Callback after BaseUrlScreen.
 
-        BASE_URL env var or an existing config entry both count as set.
+        The modal already saved to config on dismiss. Init/re-init the client
+        with the latest credentials so requests hit the right endpoint and
+        models fetch (or refetch).
         """
-        if base_url_in_config() or load_base_url():
+        del url  # value already persisted by the modal
+        api_key = load_api_key()
+        if not api_key:
             return
-        self.push_screen(BaseUrlScreen(), self._on_base_url_entered)
-
-    def _on_base_url_entered(self, url: str | None) -> None:
-        """Callback after BaseUrlScreen. Re-init client if user picked a URL."""
-        if url and self.client is not None:
-            # Re-init so the new endpoint takes effect, then refetch models.
-            api_key = load_api_key()
-            if api_key:
-                self._init_client(api_key)
+        self._init_client(api_key)
+        self.update_status()
+        if self.active_panel:
+            self.active_panel.get_input().focus()
 
     def update_status(self) -> None:
         model_short = self.model.split("/")[-1]

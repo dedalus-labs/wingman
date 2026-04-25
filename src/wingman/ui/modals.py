@@ -76,6 +76,7 @@ class BaseUrlScreen(ModalScreen[str | None]):
     """Prompt for the API base URL on first launch (or via /base_url)."""
 
     BINDINGS = [
+        Binding("ctrl+c", "quit", "Quit", priority=True),
         Binding("escape", "cancel", "Cancel", priority=True),
     ]
 
@@ -115,6 +116,9 @@ class BaseUrlScreen(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def action_quit(self) -> None:
+        self.app.exit()
 
 
 class SelectionModal(ModalScreen[str | None]):

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .checkpoints import get_checkpoint_manager
-from .config import load_base_url, save_base_url
+from .config import load_base_url
 from .export import export_session_json, export_session_markdown
 from .memory import add_entry, clear_all, load_memory
 from .sessions import delete_session, rename_session, save_session_working_dir
@@ -52,7 +52,7 @@ class Commands:
             "compact": lambda: self.app.do_compact(),
             "context": lambda: self.app.show_context_info(),
             "key": lambda: self.app.push_screen(self._api_key_screen(), self.app.on_api_key_entered),
-            "base_url": lambda: self.base_url(arg),
+            "base_url": lambda: self.app.push_screen(self._base_url_screen(), self.app.on_base_url_entered),
             "clear": lambda: self.app.action_clear_chat(),
             "help": lambda: self.app.action_help(),
             "quit": lambda: self.app.exit(),
@@ -438,40 +438,14 @@ Useful for: API patterns, file locations, conventions.
         else:
             self.app.show_info(f"[#f7768e]Could not import from:[/] {arg}")
 
-    # --- Endpoint commands ---
-
-    def base_url(self, arg: str) -> None:
-        """Show or change the API base URL.
-
-        /base_url            print the current value
-        /base_url <url>      set, persist to config, re-init client, refetch models
-        /base_url default    revert to the SDK default (api.dedaluslabs.ai)
-        """
-        arg = arg.strip()
-        if not arg:
-            current = load_base_url() or "(default: https://api.dedaluslabs.ai)"
-            self.app.show_info(f"Base URL: {current}")
-            return
-        if arg == "default":
-            new_url: str | None = None
-        elif "://" in arg:
-            new_url = arg
-        else:
-            new_url = f"https://{arg}"
-        save_base_url(new_url)
-        # Re-init the client so subsequent requests hit the new endpoint.
-        from .config import load_api_key
-
-        api_key = load_api_key()
-        if api_key:
-            self.app._init_client(api_key)
-        shown = new_url or "(default)"
-        self.app.show_info(f"[#9ece6a]Base URL set to:[/] {shown}")
-        self.app.update_status()
-
     # --- Private helpers ---
 
     def _api_key_screen(self):
         from .ui.modals import APIKeyScreen
 
         return APIKeyScreen()
+
+    def _base_url_screen(self):
+        from .ui.modals import BaseUrlScreen
+
+        return BaseUrlScreen(current=load_base_url() or "")
